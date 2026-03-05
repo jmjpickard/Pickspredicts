@@ -1,0 +1,95 @@
+---
+import DayTabs from "./DayTabs.astro";
+import RaceCard from "./RaceCard.astro";
+import ReturnsBanner from "./ReturnsBanner.astro";
+import { getRaceDays, type Race } from "../types";
+
+interface Props {
+  activeDate?: string;
+  races: Race[];
+}
+
+const { activeDate, races } = Astro.props;
+
+const days = getRaceDays(races);
+const selectedDate = days.some((d) => d.date === activeDate) ? activeDate : days[0]?.date;
+const selectedLabel = days.find((d) => d.date === selectedDate)?.label ?? selectedDate ?? "";
+
+const hasResults = races.some((r) => r.runners.some((run) => run.finish_position != null));
+
+const dayRaces = races
+  .filter((r) => selectedDate && r.date?.startsWith(selectedDate))
+  .sort((a, b) => (a.off_time ?? "").localeCompare(b.off_time ?? ""));
+
+const racesExist = races.length > 0;
+const dayHasRaces = dayRaces.length > 0;
+
+// Festival totals
+const totalBets = races.reduce((s, r) => s + (r.num_bets ?? 0), 0);
+const totalWinPl = races.reduce((s, r) => s + (r.race_win_pl ?? 0), 0);
+const totalEwPl = races.reduce((s, r) => s + (r.race_ew_pl ?? 0), 0);
+---
+
+{!racesExist ? (
+  <div class="text-center py-16">
+    <h2 class="text-xl font-semibold text-gray-700 mb-2">No predictions yet</h2>
+    <p class="text-gray-500">
+      Predictions will appear once Cheltenham racecards are declared.
+    </p>
+  </div>
+) : (
+  <>
+    {hasResults && totalBets > 0 && (
+      <div class="rounded-lg border-2 border-racing-green bg-racing-green/5 p-4 mb-6">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 class="text-base font-bold text-racing-green">Festival Returns</h2>
+            <p class="text-xs text-gray-500 mt-0.5">
+              {totalBets} "Strong value" bets across {Math.max(days.length, 1)} days
+            </p>
+          </div>
+          <div class="flex gap-8">
+            <div class="text-center">
+              <p class="text-xs text-gray-500 uppercase tracking-wide">1pt Win</p>
+              <p class={`text-2xl font-bold tabular-nums ${totalWinPl >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                {totalWinPl >= 0 ? "+" : ""}{totalWinPl.toFixed(2)}pts
+              </p>
+              <p class="text-xs text-gray-400 mt-0.5">
+                {(totalWinPl / totalBets * 100).toFixed(0)}% ROI
+              </p>
+            </div>
+            <div class="text-center">
+              <p class="text-xs text-gray-500 uppercase tracking-wide">1pt E/W</p>
+              <p class={`text-2xl font-bold tabular-nums ${totalEwPl >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                {totalEwPl >= 0 ? "+" : ""}{totalEwPl.toFixed(2)}pts
+              </p>
+              <p class="text-xs text-gray-400 mt-0.5">
+                {(totalEwPl / totalBets * 100).toFixed(0)}% ROI
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+    <DayTabs activeDate={selectedDate ?? ""} days={days} />
+
+    {hasResults && dayRaces.some((r) => (r.num_bets ?? 0) > 0) && (
+      <ReturnsBanner races={dayRaces} label={`${selectedLabel} Returns`} />
+    )}
+
+    {!dayHasRaces ? (
+      <div class="text-center py-12">
+        <p class="text-gray-500">
+          No races for {selectedLabel} yet.
+        </p>
+      </div>
+    ) : (
+      <div class="space-y-3">
+        {dayRaces.map((race) => (
+          <RaceCard race={race} showResults={hasResults} />
+        ))}
+      </div>
+    )}
+  </>
+)}

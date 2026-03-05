@@ -1,0 +1,3 @@
+[submodule "rpscrape"]
+	path = rpscrape
+	url = https://github.com/joenano/rpscrape.git

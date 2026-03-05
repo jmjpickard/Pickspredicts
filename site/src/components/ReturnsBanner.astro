@@ -1,0 +1,66 @@
+---
+import type { Race } from "../types";
+
+interface Props {
+  races: Race[];
+  label: string;
+}
+
+const { races, label } = Astro.props;
+
+const totalBets = races.reduce((s, r) => s + (r.num_bets ?? 0), 0);
+
+// Use the last race's cumulative values for this set
+const lastRace = races[races.length - 1];
+const dayWinPl = races.reduce((s, r) => s + (r.race_win_pl ?? 0), 0);
+const dayEwPl = races.reduce((s, r) => s + (r.race_ew_pl ?? 0), 0);
+const cumWinPl = lastRace?.cumulative_win_pl ?? 0;
+const cumEwPl = lastRace?.cumulative_ew_pl ?? 0;
+
+function plStr(v: number): string {
+  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
+}
+
+function plColor(v: number): string {
+  if (v > 0) return "text-emerald-700";
+  if (v < 0) return "text-red-600";
+  return "text-gray-600";
+}
+---
+
+{totalBets > 0 && (
+  <div class="rounded-lg border border-gray-200 bg-white p-4 mb-5">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <h3 class="text-sm font-semibold text-gray-700">{label}</h3>
+        <p class="text-xs text-gray-400 mt-0.5">{totalBets} bets ({races.length} races)</p>
+      </div>
+      <div class="flex gap-6">
+        <div class="text-center">
+          <p class="text-xs text-gray-500 uppercase tracking-wide">1pt Win</p>
+          <p class={`text-lg font-bold tabular-nums ${plColor(dayWinPl)}`}>
+            {plStr(dayWinPl)}
+          </p>
+        </div>
+        <div class="text-center">
+          <p class="text-xs text-gray-500 uppercase tracking-wide">1pt E/W</p>
+          <p class={`text-lg font-bold tabular-nums ${plColor(dayEwPl)}`}>
+            {plStr(dayEwPl)}
+          </p>
+        </div>
+        <div class="text-center border-l border-gray-200 pl-6">
+          <p class="text-xs text-gray-500 uppercase tracking-wide">Cumul. Win</p>
+          <p class={`text-lg font-bold tabular-nums ${plColor(cumWinPl)}`}>
+            {plStr(cumWinPl)}
+          </p>
+        </div>
+        <div class="text-center">
+          <p class="text-xs text-gray-500 uppercase tracking-wide">Cumul. E/W</p>
+          <p class={`text-lg font-bold tabular-nums ${plColor(cumEwPl)}`}>
+            {plStr(cumEwPl)}
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+)}

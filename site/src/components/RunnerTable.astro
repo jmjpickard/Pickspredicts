@@ -1,0 +1,166 @@
+---
+import type { Runner } from "../types";
+
+interface Props {
+  runners: Runner[];
+  showResults?: boolean;
+}
+
+const { runners, showResults = false } = Astro.props;
+
+const sorted = [...runners].sort((a, b) => {
+  if (a.value_score === null && b.value_score === null) return b.win_prob - a.win_prob;
+  if (a.value_score === null) return 1;
+  if (b.value_score === null) return -1;
+  return b.value_score - a.value_score;
+});
+
+function pct(v: number | null): string {
+  if (v === null) return "—";
+  return `${(v * 100).toFixed(1)}%`;
+}
+
+function oddsStr(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  return v.toFixed(1);
+}
+
+function valueClass(v: number | null): string {
+  if (v === null) return "text-gray-400";
+  if (v >= 0.05) return "text-emerald-700 font-semibold";
+  if (v >= -0.03) return "text-gray-700";
+  return "text-red-600";
+}
+
+function verdictClass(verdict: string): string {
+  if (verdict === "Strong value") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (verdict === "Fair price") return "bg-gray-50 text-gray-600 border-gray-200";
+  if (verdict === "No odds") return "bg-slate-50 text-slate-600 border-slate-200";
+  return "bg-red-50 text-red-600 border-red-200";
+}
+
+function rowClass(runner: Runner): string {
+  if (!showResults) return "hover:bg-gray-50";
+  if (runner.won) return "bg-emerald-50/60 hover:bg-emerald-50";
+  if (runner.placed) return "bg-amber-50/50 hover:bg-amber-50";
+  return "hover:bg-gray-50";
+}
+
+function posStr(pos: number | null | undefined): string {
+  if (pos === null || pos === undefined) return "—";
+  if (pos === 1) return "1st";
+  if (pos === 2) return "2nd";
+  if (pos === 3) return "3rd";
+  return `${pos}th`;
+}
+
+function posClass(pos: number | null | undefined): string {
+  if (pos === 1) return "text-emerald-700 font-bold";
+  if (pos !== null && pos !== undefined && pos <= 3) return "text-amber-700 font-semibold";
+  return "text-gray-500";
+}
+
+function plStr(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "";
+  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
+}
+
+function plClass(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "";
+  if (v > 0) return "text-emerald-700 font-semibold";
+  if (v < 0) return "text-red-500";
+  return "text-gray-500";
+}
+---
+
+<div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-gray-200 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+        {showResults && <th class="py-3 pr-2 text-center w-12">Pos</th>}
+        <th class="py-3 pr-3">Horse</th>
+        <th class="py-3 px-2 text-right">OR</th>
+        <th class="py-3 px-2 text-right">Win%</th>
+        <th class="py-3 px-2 text-right">Place%</th>
+        <th class="py-3 px-2 text-right">SP</th>
+        <th class="py-3 px-2 text-right">Implied</th>
+        <th class="py-3 px-2 text-right">Value</th>
+        <th class="py-3 pl-2">Verdict</th>
+        {showResults && <th class="py-3 px-2 text-right">Win P&L</th>}
+        {showResults && <th class="py-3 px-2 text-right">E/W P&L</th>}
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100">
+      {sorted.map((runner) => (
+        <tr class={rowClass(runner)}>
+          {showResults && (
+            <td class={`py-3 pr-2 text-center tabular-nums ${posClass(runner.finish_position)}`}>
+              {posStr(runner.finish_position)}
+            </td>
+          )}
+          <td class="py-3 pr-3">
+            <div class="flex items-center gap-1.5">
+              {showResults && runner.won && (
+                <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              )}
+              {showResults && runner.placed && !runner.won && (
+                <span class="inline-block w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              )}
+              <span class="font-medium text-gray-900">{runner.horse_name}</span>
+              {runner.is_bet && (
+                <span class="inline-block rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-bold text-emerald-700 uppercase leading-none">
+                  Bet
+                </span>
+              )}
+            </div>
+            <details class="mt-1">
+              <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-600">
+                Top factors
+              </summary>
+              <p class="text-xs text-gray-500 mt-1 leading-relaxed">
+                {runner.top_features}
+              </p>
+            </details>
+          </td>
+          <td class="py-3 px-2 text-right text-gray-600 tabular-nums">
+            {runner.official_rating ?? "—"}
+          </td>
+          <td class="py-3 px-2 text-right tabular-nums font-medium">
+            {pct(runner.win_prob)}
+          </td>
+          <td class="py-3 px-2 text-right tabular-nums text-gray-600">
+            {pct(runner.place_prob)}
+          </td>
+          <td class="py-3 px-2 text-right tabular-nums text-gray-600">
+            {oddsStr(runner.sp_decimal ?? runner.best_odds)}
+          </td>
+          <td class="py-3 px-2 text-right tabular-nums text-gray-600">
+            {pct(runner.implied_prob)}
+          </td>
+          <td class={`py-3 px-2 text-right tabular-nums ${valueClass(runner.value_score)}`}>
+            {runner.value_score !== null
+              ? `${runner.value_score >= 0 ? "+" : ""}${(runner.value_score * 100).toFixed(1)}%`
+              : "—"}
+          </td>
+          <td class="py-3 pl-2">
+            <span
+              class={`inline-block rounded border px-2 py-0.5 text-xs font-medium ${verdictClass(runner.verdict)}`}
+            >
+              {runner.verdict}
+            </span>
+          </td>
+          {showResults && (
+            <td class={`py-3 px-2 text-right tabular-nums text-xs ${plClass(runner.win_pl)}`}>
+              {runner.is_bet ? plStr(runner.win_pl) : ""}
+            </td>
+          )}
+          {showResults && (
+            <td class={`py-3 px-2 text-right tabular-nums text-xs ${plClass(runner.ew_pl)}`}>
+              {runner.is_bet ? plStr(runner.ew_pl) : ""}
+            </td>
+          )}
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>

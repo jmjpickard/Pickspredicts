@@ -1,0 +1,42 @@
+---
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-racing-cream min-h-screen font-['Inter',sans-serif] text-gray-900">
+    <header class="bg-racing-green text-white">
+      <div class="mx-auto max-w-5xl px-4 py-5">
+        <a href="/" class="block">
+          <h1 class="text-2xl font-bold tracking-tight">
+            Racing Value Finder
+          </h1>
+          <p class="text-sm text-emerald-300 mt-0.5">Value Finder</p>
+        </a>
+      </div>
+    </header>
+    <main class="mx-auto max-w-5xl px-4 py-6">
+      <slot />
+    </main>
+    <footer class="border-t border-gray-200 mt-12">
+      <div class="mx-auto max-w-5xl px-4 py-4 text-xs text-gray-400">
+        Model predictions for entertainment only. Always gamble responsibly.
+      </div>
+    </footer>
+  </body>
+</html>

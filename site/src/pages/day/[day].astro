@@ -1,0 +1,24 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import DayPage from "../../components/DayPage.astro";
+import { getRaceDays, type Race } from "../../types";
+
+import predictions from "../../../public/predictions.json";
+
+const races = predictions as Race[];
+
+export function getStaticPaths() {
+  const days = getRaceDays(predictions as Race[]);
+  // Root path renders the first day; create dedicated routes for subsequent days.
+  return days.slice(1).map((day) => ({
+    params: { day: day.slug },
+    props: { activeDate: day.date, dayLabel: day.label },
+  }));
+}
+
+const { dayLabel, activeDate } = Astro.props as { dayLabel: string; activeDate: string };
+---
+
+<Layout title={`${dayLabel} — Racing Value Finder`}>
+  <DayPage activeDate={activeDate} races={races} />
+</Layout>

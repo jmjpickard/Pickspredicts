@@ -1,0 +1,35 @@
+# Data
+data/raw/
+data/staged/
+data/marts/
+
+# Environment
+.env
+.venv/
+configs/certs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# rpscrape output
+rpscrape/output/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Astro build cache
+site/.astro/
+
+# Node
+site/node_modules/
+site/dist/

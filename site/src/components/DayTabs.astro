@@ -1,0 +1,33 @@
+---
+import type { RaceDay } from "../types";
+
+interface Props {
+  activeDate: string;
+  days: RaceDay[];
+}
+
+const { activeDate, days } = Astro.props;
+
+function dayHref(day: RaceDay, index: number): string {
+  return index === 0 ? "/" : `/day/${day.slug}`;
+}
+---
+
+<nav class="flex gap-1 mb-6">
+  {days.map((day, index) => {
+    const active = day.date === activeDate;
+    return (
+      <a
+        href={dayHref(day, index)}
+        class:list={[
+          "px-5 py-2 rounded-md text-sm font-semibold transition-colors",
+          active
+            ? "bg-racing-green text-white"
+            : "bg-white text-gray-600 hover:bg-gray-100 border border-gray-200",
+        ]}
+      >
+        {day.label}
+      </a>
+    );
+  })}
+</nav>

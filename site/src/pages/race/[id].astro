@@ -1,0 +1,116 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import RunnerTable from "../../components/RunnerTable.astro";
+import type { Race } from "../../types";
+
+import predictions from "../../../public/predictions.json";
+
+const races = predictions as Race[];
+const hasResults = races.some((r) => r.runners.some((run) => run.finish_position != null));
+
+export function getStaticPaths() {
+  const allRaces = predictions as Race[];
+  return allRaces.map((race) => ({
+    params: { id: race.race_id },
+  }));
+}
+
+const { id } = Astro.params;
+const race = races.find((r) => r.race_id === id);
+
+if (!race) {
+  return Astro.redirect("/");
+}
+
+const time = race.off_time ?? "";
+const name = race.race_name ?? `Race ${race.race_id}`;
+const course = race.course ?? "";
+const type = race.race_type ?? "";
+const cls = race.race_class ? `${race.race_class}` : "";
+const dist = race.distance_f ? `${race.distance_f}f` : "";
+const badges = [course, type, cls, dist].filter(Boolean);
+const handicapBadge = race.is_handicap === true;
+const patternBadge = race.pattern && race.pattern !== "None" && race.pattern !== "";
+
+const bets = race.runners.filter((r) => r.is_bet);
+const winPl = race.race_win_pl ?? 0;
+const ewPl = race.race_ew_pl ?? 0;
+
+function plStr(v: number): string {
+  return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
+}
+
+function plColor(v: number): string {
+  if (v > 0) return "text-emerald-700";
+  if (v < 0) return "text-red-600";
+  return "text-gray-600";
+}
+---
+
+<Layout title={`${name} — Racing Value Finder`}>
+  <a href="/" class="inline-flex items-center text-sm text-gray-500 hover:text-racing-green mb-4">
+    &larr; All races
+  </a>
+
+  <div class="mb-6">
+    <div class="flex items-center gap-2 mb-1">
+      {time && (
+        <span class="text-lg font-semibold text-racing-green">{time}</span>
+      )}
+      <h2 class="text-xl font-bold">{name}</h2>
+    </div>
+    <div class="flex flex-wrap gap-1.5 mt-2">
+      {badges.map((b) => (
+        <span class="inline-block rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+          {b}
+        </span>
+      ))}
+      {handicapBadge && (
+        <span class="inline-block rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700 border border-amber-200">
+          Handicap
+        </span>
+      )}
+      {patternBadge && (
+        <span class="inline-block rounded bg-purple-50 px-2 py-0.5 text-xs text-purple-700 border border-purple-200">
+          {race.pattern}
+        </span>
+      )}
+      <span class="inline-block rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+        {race.runners.length} runners
+      </span>
+      {race.num_places_paid && (
+        <span class="inline-block rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+          {race.num_places_paid} places @ {race.place_fraction}
+        </span>
+      )}
+    </div>
+  </div>
+
+  {hasResults && bets.length > 0 && (
+    <div class="rounded-lg border border-gray-200 bg-white p-4 mb-4">
+      <div class="flex items-center justify-between">
+        <p class="text-sm text-gray-600">
+          <span class="font-semibold">{bets.length}</span> bet{bets.length > 1 ? "s" : ""} in this race
+        </p>
+        <div class="flex gap-5">
+          <div class="text-right">
+            <span class="text-xs text-gray-500 uppercase">1pt Win</span>
+            <p class={`text-base font-bold tabular-nums ${plColor(winPl)}`}>
+              {plStr(winPl)}
+            </p>
+          </div>
+          <div class="text-right">
+            <span class="text-xs text-gray-500 uppercase">1pt E/W</span>
+            <p class={`text-base font-bold tabular-nums ${plColor(ewPl)}`}>
+              {plStr(ewPl)}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )}
+
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <RunnerTable runners={race.runners} showResults={hasResults} />
+  </div>
+</Layout>

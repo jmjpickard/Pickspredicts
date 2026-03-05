@@ -1,0 +1,15 @@
+---
+import Layout from "../layouts/Layout.astro";
+import DayPage from "../components/DayPage.astro";
+import { getRaceDays, type Race } from "../types";
+
+import predictions from "../../public/predictions.json";
+
+const races = predictions as Race[];
+const days = getRaceDays(races);
+const activeDate = days[0]?.date;
+---
+
+<Layout title="Racing Value Finder">
+  <DayPage activeDate={activeDate} races={races} />
+</Layout>

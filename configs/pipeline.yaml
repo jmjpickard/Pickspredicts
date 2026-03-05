@@ -1,0 +1,80 @@
+# Pipeline configuration
+
+rpscrape:
+  commit: 743224c
+  path: ./rpscrape
+
+courses:
+  cheltenham:
+    id: 11
+    years: "2020-2025"
+    type: jumps
+    betfair: true
+  aintree:
+    id: 32
+    years: "2020-2025"
+    type: jumps
+    betfair: true
+  punchestown:
+    id: 195
+    years: "2020-2025"
+    type: jumps
+    betfair: true
+  leopardstown:
+    id: 187
+    years: "2020-2025"
+    type: jumps
+    betfair: true
+
+paths:
+  raw_results: data/raw/results
+  raw_racecards: data/raw/racecards
+  raw_betfair: data/raw/betfair
+  staged_db: data/staged/cheltenham.duckdb
+  staged_parquet: data/staged/parquet
+  marts: data/marts
+
+racecards:
+  days: 9
+  region: gb ire
+  scoring_courses:
+    - Catterick
+    - Thurles
+
+betfair:
+  regions:
+    Cheltenham: uk
+    Aintree: uk
+    Punchestown: ire
+    Leopardstown: ire
+  match_threshold: 0.70
+  rate_limit_secs: 1
+
+features:
+  comment_parsing: true
+  betfair_live: false
+
+model:
+  label: won
+  val_course: Cheltenham
+  val_start: "2025-03-11"
+  val_end: "2025-03-14"
+  output_dir: data/model
+  lgbm:
+    objective: binary
+    metric: binary_logloss
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    min_child_samples: 20
+    num_iterations: 2000
+    early_stopping_rounds: 50
+    verbose: -1
+    seed: 42
+  harville:
+    num_places: 3
+  value:
+    strong_threshold: 0.05
+    opposable_threshold: -0.03
