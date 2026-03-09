@@ -40,6 +40,9 @@ function verdictClass(verdict: string): string {
 }
 
 function rowClass(runner: Runner): string {
+  if (!showResults && (runner.plan_a_points ?? 0) > 0) {
+    return "bg-racing-green/5 hover:bg-racing-green/10";
+  }
   if (!showResults) return "hover:bg-gray-50";
   if (runner.won) return "bg-emerald-50/60 hover:bg-emerald-50";
   if (runner.placed) return "bg-amber-50/50 hover:bg-amber-50";
@@ -110,6 +113,11 @@ function plClass(v: number | null | undefined): string {
               {runner.is_bet && (
                 <span class="inline-block rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-bold text-emerald-700 uppercase leading-none">
                   Bet
+                </span>
+              )}
+              {(runner.plan_a_points ?? 0) > 0 && (
+                <span class="inline-block rounded bg-racing-green/15 px-1.5 py-0.5 text-[10px] font-bold text-racing-green uppercase leading-none">
+                  Plan A {runner.plan_a_points?.toFixed(1)}pt
                 </span>
               )}
             </div>

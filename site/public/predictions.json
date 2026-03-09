@@ -11,7 +11,7 @@
     "is_handicap": "0",
     "pattern": "Grade 1",
     "going": "Good To Soft",
-    "analysis": "Kopek Des Bordes leads on pure win chance (38.9%), but Hansard has the best value case at 120 (2.6% vs market 0.8%).",
+    "analysis": "Front of market is tight/fair; little clean value except very speculative outsiders.",
     "runners": [
       {
         "horse_id": "5713791",
@@ -111,7 +111,10 @@
     "is_handicap": "0",
     "pattern": "Grade 1",
     "going": "Good To Soft",
-    "analysis": "Old Park Star is both model top and market favourite, and still rates as a strong overlay (33.6% vs market 27.8%).",
+    "analysis": "Old Park Star is both top win% and genuine overlay.",
+    "plan_a_pick_horse_id": "6675653",
+    "plan_a_pick_horse_name": "Old Park Star",
+    "plan_a_points": 2.0,
     "runners": [
       {
         "horse_id": "6675653",
@@ -123,7 +126,8 @@
         "verdict": "Strong value",
         "top_features": "sp_rank(+1.680), market_confidence(-0.357), market_implied_prob(+0.292)",
         "official_rating": 151,
-        "best_odds": 3.6
+        "best_odds": 3.6,
+        "plan_a_points": 2.0
       },
       {
         "horse_id": "7436495",
@@ -271,7 +275,10 @@
     "is_handicap": "0",
     "pattern": "Grade 1",
     "going": "Good To Soft",
-    "analysis": "Romeo Coolio is both model top and market favourite, and still rates as a value edge (25.6% vs market 22.2%).",
+    "analysis": "Romeo Coolio is top win%, but edge versus price is modest.",
+    "plan_a_pick_horse_id": "4908794",
+    "plan_a_pick_horse_name": "Romeo Coolio",
+    "plan_a_points": 3.0,
     "runners": [
       {
         "horse_id": "4908794",
@@ -283,7 +290,8 @@
         "verdict": "Fair price",
         "top_features": "sp_rank(+1.618), market_confidence(-0.270), combo_winpct(+0.100)",
         "official_rating": 158,
-        "best_odds": 4.5
+        "best_odds": 4.5,
+        "plan_a_points": 3.0
       },
       {
         "horse_id": "4990305",
@@ -479,7 +487,7 @@
     "is_handicap": "0",
     "pattern": "Grade 1",
     "going": "Good To Soft",
-    "analysis": "Front of market is tight/fair; clean value is mostly in speculative outsiders such as Riskaway.",
+    "analysis": "Front of market is tight/fair; little clean value except very speculative outsiders.",
     "runners": [
       {
         "horse_id": "5686933",
@@ -759,7 +767,10 @@
     "is_handicap": "0",
     "pattern": "Grade 1",
     "going": "Good To Soft",
-    "analysis": "Lossiemouth is both model top and market favourite, and still rates as a strong overlay (50.1% vs market 31.7%).",
+    "analysis": "Lossiemouth is both top win% and genuine overlay.",
+    "plan_a_pick_horse_id": "4241553",
+    "plan_a_pick_horse_name": "Lossiemouth",
+    "plan_a_points": 2.5,
     "runners": [
       {
         "horse_id": "4241553",
@@ -771,7 +782,8 @@
         "verdict": "Strong value",
         "top_features": "sp_rank(+1.877), market_implied_prob(+0.266), market_confidence(-0.264)",
         "official_rating": 159,
-        "best_odds": 3.15
+        "best_odds": 3.15,
+        "plan_a_points": 2.5
       },
       {
         "horse_id": "5523890",
@@ -883,7 +895,10 @@
     "is_handicap": "0",
     "pattern": "Grade 1",
     "going": "Good To Soft",
-    "analysis": "Majborough leads on pure win chance (43.9%), but Found A Fifty has the best value case at 130 (5.1% vs market 0.8%).",
+    "analysis": "Market fav looks short; LEau du Sud is best value play.",
+    "plan_a_pick_horse_id": "4173211",
+    "plan_a_pick_horse_name": "LEau du Sud",
+    "plan_a_points": 2.0,
     "runners": [
       {
         "horse_id": "4990306",
@@ -907,7 +922,8 @@
         "verdict": "Fair price",
         "top_features": "sp_rank(+0.591), or_rpr_diff(+0.195), rpr_current(+0.184)",
         "official_rating": 163,
-        "best_odds": 7.6
+        "best_odds": 7.6,
+        "plan_a_points": 2.0
       },
       {
         "horse_id": "4078697",
@@ -1019,7 +1035,10 @@
     "is_handicap": "0",
     "pattern": "",
     "going": "Good To Soft",
-    "analysis": "Quiryn leads on pure win chance (11.5%), but Of Land And Sea has the best value case at 150 (3.0% vs market 0.7%).",
+    "analysis": "Market fav looks short; Quiryn is best value play.",
+    "plan_a_pick_horse_id": "7609878",
+    "plan_a_pick_horse_name": "Quiryn",
+    "plan_a_points": 1.5,
     "runners": [
       {
         "horse_id": "7609878",
@@ -1031,7 +1050,8 @@
         "verdict": "Fair price",
         "top_features": "sp_rank(+0.866), market_confidence(-0.240), market_implied_prob(-0.125)",
         "official_rating": 125,
-        "best_odds": 10.0
+        "best_odds": 10.0,
+        "plan_a_points": 1.5
       },
       {
         "horse_id": "7436469",
@@ -1299,7 +1319,10 @@
     "is_handicap": "1",
     "pattern": "",
     "going": "Good To Soft",
-    "analysis": "Jagwar leads on pure win chance (20.0%), but Quebecois has the best value case at 13 (12.2% vs market 7.7%).",
+    "analysis": "Quebecois is the strongest non-fav value.",
+    "plan_a_pick_horse_id": "4922466",
+    "plan_a_pick_horse_name": "Quebecois",
+    "plan_a_points": 1.5,
     "runners": [
       {
         "horse_id": "4658876",
@@ -1323,7 +1346,8 @@
         "verdict": "Fair price",
         "top_features": "sp_rank(+0.686), market_confidence(-0.179), or_trend_last5(+0.149)",
         "official_rating": 139,
-        "best_odds": 13.0
+        "best_odds": 13.0,
+        "plan_a_points": 1.5
       },
       {
         "horse_id": "3837375",
@@ -1579,7 +1603,10 @@
     "is_handicap": "1",
     "pattern": "",
     "going": "Good To Soft",
-    "analysis": "Madara leads on pure win chance (14.8%), but No Questions Asked has the best value case at 23 (6.7% vs market 4.3%).",
+    "analysis": "Market fav looks short; No Questions Asked is best value play.",
+    "plan_a_pick_horse_id": "4245931",
+    "plan_a_pick_horse_name": "No Questions Asked",
+    "plan_a_points": 1.0,
     "runners": [
       {
         "horse_id": "4213714",
@@ -1639,7 +1666,8 @@
         "verdict": "Fair price",
         "top_features": "market_implied_prob(-0.223), or_rpr_diff(+0.116), or_current(+0.115)",
         "official_rating": 149,
-        "best_odds": 23.0
+        "best_odds": 23.0,
+        "plan_a_points": 1.0
       },
       {
         "horse_id": "6807931",
@@ -1871,7 +1899,10 @@
     "is_handicap": "1",
     "pattern": "",
     "going": "Good To Soft",
-    "analysis": "Backmersackme leads on pure win chance (17.3%), but One Big Bang has the best value case at 13 (17.2% vs market 7.7%).",
+    "analysis": "One Big Bang is the strongest non-fav value.",
+    "plan_a_pick_horse_id": "4175225",
+    "plan_a_pick_horse_name": "One Big Bang",
+    "plan_a_points": 1.5,
     "runners": [
       {
         "horse_id": "5021482",
@@ -1895,7 +1926,8 @@
         "verdict": "Strong value",
         "top_features": "sp_rank(+0.371), win_rate_course(+0.200), market_confidence(-0.152)",
         "official_rating": 139,
-        "best_odds": 13.0
+        "best_odds": 13.0,
+        "plan_a_points": 1.5
       },
       {
         "horse_id": "5911215",
@@ -2091,7 +2123,10 @@
     "is_handicap": "1",
     "pattern": "",
     "going": "Good To Soft",
-    "analysis": "Saratoga is both model top and market favourite, and still rates as a value edge (15.9% vs market 12.5%).",
+    "analysis": "Best priced edges are Saratoga and Manlaga.",
+    "plan_a_pick_horse_id": "6111585",
+    "plan_a_pick_horse_name": "Saratoga",
+    "plan_a_points": 1.5,
     "runners": [
       {
         "horse_id": "6111585",
@@ -2103,7 +2138,8 @@
         "verdict": "Fair price",
         "top_features": "sp_rank(+1.326), market_confidence(-0.191), market_implied_prob(-0.147)",
         "official_rating": 130,
-        "best_odds": 8.0
+        "best_odds": 8.0,
+        "plan_a_points": 1.5
       },
       {
         "horse_id": "7289175",
@@ -2395,7 +2431,10 @@
     "is_handicap": "1",
     "pattern": "",
     "going": "Good To Soft",
-    "analysis": "Be Aware leads on pure win chance (11.2%), but Touch Me Not has the best value case at 180 (3.4% vs market 0.6%).",
+    "analysis": "Be Aware has better value than fav Ryans Rocket.",
+    "plan_a_pick_horse_id": "5577244",
+    "plan_a_pick_horse_name": "Be Aware",
+    "plan_a_points": 1.5,
     "runners": [
       {
         "horse_id": "5577244",
@@ -2407,7 +2446,8 @@
         "verdict": "Fair price",
         "top_features": "sp_rank(+0.807), market_confidence(-0.273), combo_winpct(+0.106)",
         "official_rating": 147,
-        "best_odds": 11.0
+        "best_odds": 11.0,
+        "plan_a_points": 1.5
       },
       {
         "horse_id": "4183370",
@@ -2675,7 +2715,10 @@
     "is_handicap": "1",
     "pattern": "",
     "going": "Good To Soft",
-    "analysis": "I Started A Joke is model top and the best value angle at 16 (11.5% vs market 6.2%), ahead of market favourite Storm Heart.",
+    "analysis": "Best priced edges are I Started A Joke and Kateira.",
+    "plan_a_pick_horse_id": "5728006",
+    "plan_a_pick_horse_name": "I Started A Joke",
+    "plan_a_points": 2.0,
     "runners": [
       {
         "horse_id": "5728006",
@@ -2687,7 +2730,8 @@
         "verdict": "Strong value",
         "top_features": "trainer_winpct_90d(+0.159), pre_price_move(+0.129), or_current(+0.109)",
         "official_rating": 138,
-        "best_odds": 16.0
+        "best_odds": 16.0,
+        "plan_a_points": 2.0
       },
       {
         "horse_id": "4121695",
@@ -3003,7 +3047,7 @@
     "is_handicap": "1",
     "pattern": "",
     "going": "Good To Soft",
-    "analysis": "Favori De Champdou leads on pure win chance (18.2%), but Horantzau dAiry has the best value case at 270 (3.1% vs market 0.4%).",
+    "analysis": "Horantzau dAiry has better value than fav Favori De Champdou.",
     "runners": [
       {
         "horse_id": "2496357",

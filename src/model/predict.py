@@ -31,6 +31,8 @@ META_COLS = {
     "placed",
 }
 
+PLAN_A_POINTS_LADDER = [2.0, 1.5, 1.5, 1.5, 1.5, 1.0, 1.0]
+
 
 def load_config() -> dict[str, Any]:
     with open(PROJECT_ROOT / "configs" / "pipeline.yaml") as f:
@@ -120,8 +122,123 @@ def _fmt_odds(odds: float) -> str:
     return text.rstrip("0").rstrip(".")
 
 
+def _value_views(group: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    with_odds = group[
+        group["best_odds"].notna()
+        & (group["best_odds"] > 1)
+        & group["value_score"].notna()
+    ].copy()
+    if with_odds.empty:
+        return with_odds, with_odds
+
+    realistic = with_odds[
+        (with_odds["value_score"] >= 0.015)
+        & (with_odds["best_odds"] <= 30)
+        & (with_odds["win_prob"] >= 0.05)
+    ].copy()
+    realistic = realistic.sort_values("value_score", ascending=False)
+    return with_odds, realistic
+
+
+def _plan_a_score(row: pd.Series) -> float:
+    win_prob = float(row.get("win_prob", 0.0))
+    value_score = max(float(row.get("value_score", 0.0)), 0.0)
+    odds = float(row.get("best_odds", np.nan))
+    score = (value_score * 2.0) + (win_prob * 0.8)
+    if pd.notna(odds) and odds > 30:
+        score -= 0.15
+    elif pd.notna(odds) and odds > 20:
+        score -= 0.08
+    return score
+
+
+def _select_plan_a_runner(group: pd.DataFrame, strong_thresh: float) -> pd.Series | None:
+    if group.empty:
+        return None
+    ordered = group.sort_values("win_prob", ascending=False)
+    with_odds, realistic = _value_views(ordered)
+
+    if not realistic.empty:
+        return realistic.sort_values(
+            ["value_score", "win_prob"],
+            ascending=[False, False],
+        ).iloc[0]
+
+    if not with_odds.empty:
+        strong = with_odds[
+            (with_odds["value_score"] >= strong_thresh)
+            & (with_odds["win_prob"] >= 0.12)
+        ].copy()
+        if not strong.empty:
+            return strong.sort_values(
+                ["value_score", "win_prob"],
+                ascending=[False, False],
+            ).iloc[0]
+
+    return None
+
+
+def _build_plan_a_points(
+    out_df: pd.DataFrame,
+    strong_thresh: float,
+) -> dict[tuple[str, str], float]:
+    """Build a 10pt daily Plan A using one primary selection per race."""
+    plan_points: dict[tuple[str, str], float] = {}
+    if out_df.empty:
+        return plan_points
+
+    working = out_df.copy()
+    if "date" not in working.columns:
+        return plan_points
+    working["date"] = working["date"].astype(str).str[:10]
+
+    for date, day_group in working.groupby("date"):
+        race_candidates: list[dict[str, object]] = []
+        for race_id, race_group in day_group.groupby("race_id"):
+            selected = _select_plan_a_runner(race_group, strong_thresh=strong_thresh)
+            if selected is None:
+                continue
+            race_candidates.append({
+                "date": str(date),
+                "race_id": str(race_id),
+                "horse_id": str(selected.get("horse_id")),
+                "score": _plan_a_score(selected),
+            })
+
+        if not race_candidates:
+            continue
+
+        ranked = sorted(race_candidates, key=lambda item: float(item["score"]), reverse=True)
+        count = len(ranked)
+        if count == 1:
+            points = [10.0]
+        elif count == 2:
+            points = [6.0, 4.0]
+        elif count == 3:
+            points = [4.0, 3.0, 3.0]
+        elif count == 4:
+            points = [3.5, 2.5, 2.0, 2.0]
+        elif count == 5:
+            points = [3.0, 2.0, 2.0, 1.5, 1.5]
+        elif count == 6:
+            points = [2.5, 2.0, 1.5, 1.5, 1.5, 1.0]
+        elif count == 7:
+            points = PLAN_A_POINTS_LADDER.copy()
+        else:
+            points = PLAN_A_POINTS_LADDER + [0.5] * (count - len(PLAN_A_POINTS_LADDER))
+            scale = 10.0 / sum(points)
+            points = [round(p * scale, 2) for p in points]
+            points[0] = round(points[0] + (10.0 - sum(points)), 2)
+
+        for item, pts in zip(ranked, points):
+            key = (str(item["race_id"]), str(item["horse_id"]))
+            plan_points[key] = float(pts)
+
+    return plan_points
+
+
 def _build_race_analysis(group: pd.DataFrame, strong_thresh: float) -> str:
-    """Build deterministic race-level narrative from model + market view."""
+    """Build concise race-level narrative with a value-first lens."""
     if group.empty:
         return ""
 
@@ -131,11 +248,7 @@ def _build_race_analysis(group: pd.DataFrame, strong_thresh: float) -> str:
     model_name = str(model_top.get("horse_name", ""))
     model_wp = float(model_top.get("win_prob", 0.0))
 
-    with_odds = group[
-        group["best_odds"].notna()
-        & (group["best_odds"] > 1)
-        & group["value_score"].notna()
-    ].copy()
+    with_odds, realistic_value = _value_views(group)
     if with_odds.empty:
         return (
             f"{model_name} is top on model win chance ({_fmt_pct(model_wp)}), "
@@ -146,53 +259,48 @@ def _build_race_analysis(group: pd.DataFrame, strong_thresh: float) -> str:
     value_top = with_odds.sort_values("value_score", ascending=False).iloc[0]
 
     market_name = str(market_fav.get("horse_name", ""))
-    market_odds = float(market_fav.get("best_odds", np.nan))
     value_name = str(value_top.get("horse_name", ""))
-    value_odds = float(value_top.get("best_odds", np.nan))
     value_score = float(value_top.get("value_score", 0.0))
-    value_wp = float(value_top.get("win_prob", 0.0))
-    implied = float(value_top.get("implied_prob", np.nan))
-
-    positive_value = with_odds[with_odds["value_score"] > 0].copy()
-    realistic_value = positive_value[positive_value["best_odds"] <= 30].copy()
 
     if value_score < 0:
         return (
-            f"{model_name} leads on win chance ({_fmt_pct(model_wp)}), "
-            f"but the market looks tight around {market_name} at {_fmt_odds(market_odds)}."
+            f"{model_name} leads on win%, but this race looks mostly fair-priced."
         )
 
-    if value_score < 0.02 and realistic_value.empty and not positive_value.empty:
-        outsider = positive_value.sort_values("value_score", ascending=False).iloc[0]
-        outsider_name = str(outsider.get("horse_name", ""))
+    if value_score < 0.02 and realistic_value.empty:
         return (
-            "Front of market is tight/fair; clean value is mostly in speculative outsiders "
-            f"such as {outsider_name}."
+            "Front of market is tight/fair; little clean value except very speculative outsiders."
         )
 
-    edge_label = "strong overlay" if value_score >= strong_thresh else "value edge"
+    if not realistic_value.empty:
+        top_realistic = realistic_value.iloc[0]
+        top_realistic_name = str(top_realistic.get("horse_name", ""))
+        top_realistic_vs = float(top_realistic.get("value_score", 0.0))
+        if (
+            len(realistic_value) >= 2
+            and top_realistic_vs >= 0.02
+            and float(realistic_value.iloc[1].get("value_score", 0.0)) >= 0.02
+        ):
+            second_name = str(realistic_value.iloc[1].get("horse_name", ""))
+            return f"Best priced edges are {top_realistic_name} and {second_name}."
+        if top_realistic_name == model_name == market_name and top_realistic_vs >= strong_thresh:
+            return f"{top_realistic_name} is both top win% and genuine overlay."
+        if top_realistic_name != market_name and float(market_fav.get("value_score", -1.0)) < 0:
+            return f"Market fav looks short; {top_realistic_name} is best value play."
+        if top_realistic_name != market_name:
+            if top_realistic_vs >= 0.04 and float(top_realistic.get("win_prob", 0.0)) >= 0.10:
+                return f"{top_realistic_name} is the strongest non-fav value."
+            return f"{top_realistic_name} has better value than fav {market_name}."
 
-    if value_name == model_name and value_name == market_name:
+    if value_name != market_name:
         return (
-            f"{value_name} is both model top and market favourite, and still rates as a {edge_label} "
-            f"({_fmt_pct(value_wp)} vs market {_fmt_pct(implied)})."
+            f"{value_name} has better value than fav {market_name}."
         )
 
-    if value_name == model_name and value_name != market_name:
-        return (
-            f"{value_name} is model top and the best value angle at {_fmt_odds(value_odds)} "
-            f"({_fmt_pct(value_wp)} vs market {_fmt_pct(implied)}), ahead of market favourite {market_name}."
-        )
+    if value_name == model_name == market_name and value_score >= strong_thresh:
+        return f"{value_name} is both top win% and genuine overlay."
 
-    if value_name != model_name:
-        return (
-            f"{model_name} leads on pure win chance ({_fmt_pct(model_wp)}), but {value_name} has the best value case "
-            f"at {_fmt_odds(value_odds)} ({_fmt_pct(value_wp)} vs market {_fmt_pct(implied)})."
-        )
-
-    return (
-        f"{model_name} leads at {_fmt_pct(model_wp)} and remains a fair value play at {_fmt_odds(value_odds)}."
-    )
+    return f"{model_name} is top win%, but edge versus price is modest."
 
 
 def predict() -> None:
@@ -329,6 +437,7 @@ def predict() -> None:
 
     out_df = df[output_cols].copy()
     out_df = out_df.sort_values(by=["race_id", "win_prob"], ascending=[True, False])  # type: ignore[call-overload]
+    plan_a_points_map = _build_plan_a_points(out_df, strong_thresh=strong_thresh)
 
     # Parquet
     out_df.to_parquet(output_dir / "predictions.parquet", index=False)
@@ -368,7 +477,20 @@ def predict() -> None:
             if "best_odds" in df.columns:
                 odds_val = r.get("best_odds")
                 runner_dict["best_odds"] = round(float(odds_val), 2) if pd.notna(odds_val) else None  # type: ignore[arg-type]
+            plan_key = (str(_race_id), str(r["horse_id"]))
+            if plan_key in plan_a_points_map:
+                runner_dict["plan_a_points"] = round(float(plan_a_points_map[plan_key]), 2)
             runners_list.append(runner_dict)
+        plan_runners = [runner for runner in runners_list if "plan_a_points" in runner]
+        if plan_runners:
+            plan_runners = sorted(
+                plan_runners,
+                key=lambda item: float(item.get("plan_a_points", 0.0)),
+                reverse=True,
+            )
+            race_info["plan_a_pick_horse_id"] = plan_runners[0]["horse_id"]
+            race_info["plan_a_pick_horse_name"] = plan_runners[0]["horse_name"]
+            race_info["plan_a_points"] = plan_runners[0]["plan_a_points"]
         race_info["runners"] = runners_list
         races_json.append(race_info)
 

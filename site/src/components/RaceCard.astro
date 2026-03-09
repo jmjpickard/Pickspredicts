@@ -30,6 +30,8 @@ const placed = bets.filter((r) => r.placed && !r.won);
 const winPl = race.race_win_pl ?? 0;
 const ewPl = race.race_ew_pl ?? 0;
 const analysis = (race.analysis ?? "").trim();
+const planAPick = race.plan_a_pick_horse_name ?? "";
+const planAPoints = race.plan_a_points ?? 0;
 
 function plStr(v: number): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
@@ -96,6 +98,11 @@ function plStr(v: number): string {
       )}
     </div>
   </div>
+  {planAPick && planAPoints > 0 && (
+    <p class="mt-3 text-xs text-racing-green font-semibold">
+      Plan A: {planAPoints.toFixed(1)}pt on {planAPick}
+    </p>
+  )}
   {analysis && (
     <p class="mt-3 border-t border-gray-100 pt-3 text-sm text-gray-600 leading-relaxed">
       <span class="font-semibold text-gray-800">AI view:</span>{" "}

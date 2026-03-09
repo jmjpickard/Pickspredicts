@@ -21,6 +21,19 @@ const dayRaces = races
   .filter((r) => selectedDate && r.date?.startsWith(selectedDate))
   .sort((a, b) => (a.off_time ?? "").localeCompare(b.off_time ?? ""));
 
+const dayPlanA = dayRaces
+  .filter((race) => (race.plan_a_points ?? 0) > 0 && !!race.plan_a_pick_horse_name)
+  .map((race) => ({
+    raceId: race.race_id,
+    offTime: race.off_time ?? "",
+    raceName: race.race_name ?? `Race ${race.race_id}`,
+    horseName: race.plan_a_pick_horse_name ?? "",
+    points: race.plan_a_points ?? 0,
+  }))
+  .sort((a, b) => (b.points - a.points) || a.offTime.localeCompare(b.offTime));
+
+const dayPlanATotal = dayPlanA.reduce((sum, pick) => sum + pick.points, 0);
+
 const racesExist = races.length > 0;
 const dayHasRaces = dayRaces.length > 0;
 
@@ -73,6 +86,24 @@ const totalEwPl = races.reduce((s, r) => s + (r.race_ew_pl ?? 0), 0);
     )}
 
     <DayTabs activeDate={selectedDate ?? ""} days={days} />
+
+    {dayPlanA.length > 0 && (
+      <section class="rounded-lg border border-racing-green/30 bg-racing-green/5 p-4 mb-6">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-sm font-bold text-racing-green">Plan A ({dayPlanATotal.toFixed(1)}pt)</h2>
+          <p class="text-xs text-gray-500">Value-led daily staking plan</p>
+        </div>
+        <ul class="mt-3 grid gap-1.5 sm:grid-cols-2">
+          {dayPlanA.map((pick) => (
+            <li class="text-sm text-gray-700">
+              <span class="font-semibold text-gray-900">{pick.points.toFixed(1)}pt</span>{" "}
+              {pick.horseName}
+              <span class="text-gray-500"> ({pick.offTime})</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
 
     {hasResults && dayRaces.some((r) => (r.num_bets ?? 0) > 0) && (
       <ReturnsBanner races={dayRaces} label={`${selectedLabel} Returns`} />

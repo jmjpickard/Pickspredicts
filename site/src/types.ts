@@ -9,6 +9,7 @@ export interface Runner {
   top_features: string;
   official_rating?: number | null;
   best_odds?: number | null;
+  plan_a_points?: number;
   // Result fields (2025 retrospective)
   finish_position?: number | null;
   sp_decimal?: number | null;
@@ -25,6 +26,9 @@ export interface Race {
   course?: string;
   race_name?: string;
   analysis?: string;
+  plan_a_pick_horse_id?: string;
+  plan_a_pick_horse_name?: string;
+  plan_a_points?: number;
   race_type?: string;
   race_class?: string;
   off_time?: string;
