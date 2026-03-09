@@ -133,6 +133,26 @@ def _filtered_win_rates(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
                AND h.race_date < t.race_date
                AND h.course = t.course
              HAVING COUNT(*) >= 3
-            ) AS win_rate_course
+            ) AS win_rate_course,
+            (SELECT
+                SUM(CASE WHEN h.finish_position = 1 THEN 1.0 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0)
+             FROM enriched h
+             WHERE h.horse_id = t.horse_id
+               AND h.race_date < t.race_date
+               AND h.track_direction IS NOT NULL
+               AND h.track_direction = t.track_direction
+             HAVING COUNT(*) >= 3
+            ) AS win_rate_track_direction,
+            (SELECT
+                SUM(CASE WHEN h.finish_position IS NOT NULL AND h.finish_position <= 3 THEN 1.0 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0)
+             FROM enriched h
+             WHERE h.horse_id = t.horse_id
+               AND h.race_date < t.race_date
+               AND h.track_direction IS NOT NULL
+               AND h.track_direction = t.track_direction
+             HAVING COUNT(*) >= 3
+            ) AS place_rate_track_direction
         FROM enriched t
     """).df()

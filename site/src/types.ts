@@ -24,6 +24,7 @@ export interface Race {
   date?: string;
   course?: string;
   race_name?: string;
+  analysis?: string;
   race_type?: string;
   race_class?: string;
   off_time?: string;

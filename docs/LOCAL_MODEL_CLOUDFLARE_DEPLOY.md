@@ -27,14 +27,14 @@ One-off publish:
 
 ```bash
 set -a; source .env; set +a
-SCORING_COURSES="Catterick,Thurles" .venv/bin/python scripts/run_local_publish.py
+SCORING_COURSES="Cheltenham" .venv/bin/python scripts/run_local_publish.py
 ```
 
 Continuous updates (every 3 minutes, racecards every ~30 minutes):
 
 ```bash
 set -a; source .env; set +a
-SCORING_COURSES="Catterick,Thurles" .venv/bin/python scripts/run_local_publish.py --loop
+SCORING_COURSES="Cheltenham" .venv/bin/python scripts/run_local_publish.py --loop
 ```
 
 Output JSON for the site is written to:
@@ -45,17 +45,39 @@ Output JSON for the site is written to:
 Workflow file:
 - `.github/workflows/deploy-cloudflare-pages.yml`
 
-Set these in GitHub repo settings:
-- Secret: `CLOUDFLARE_API_TOKEN`
-- Secret: `CLOUDFLARE_ACCOUNT_ID`
-- Variable: `CLOUDFLARE_PAGES_PROJECT`
+### 3.1 Create the Pages project (first time only)
+1. In Cloudflare dashboard, go to **Workers & Pages** -> **Create application** -> **Pages**.
+2. Create project name (for example `cheltenham-predictions`).
+3. You can skip Cloudflare's Git integration because deploys will come from GitHub Actions.
+4. Copy the project name exactly.
 
-Deploy behavior:
-- Pushes to `main` that touch `site/**` trigger deploy.
-- Manual deploy is available via workflow dispatch.
+### 3.2 Create API token + account ID
+1. Cloudflare -> **My Profile** -> **API Tokens** -> **Create Token** -> **Custom token**.
+2. Minimum permissions:
+- `Account` -> `Cloudflare Pages` -> `Edit`
+- `Account` -> `Account Settings` -> `Read`
+3. Account resources: include your target account.
+4. Save the token once (you won't be able to view it again).
+5. Get Account ID from Cloudflare dashboard sidebar (**Account ID**).
+
+### 3.3 Add GitHub secrets/variables
+In GitHub repo -> **Settings** -> **Secrets and variables** -> **Actions**:
+- Secret: `CLOUDFLARE_API_TOKEN` (the token above)
+- Secret: `CLOUDFLARE_ACCOUNT_ID` (Cloudflare account ID)
+- Variable: `CLOUDFLARE_PAGES_PROJECT` (Pages project name)
+- Optional variable: `CLOUDFLARE_PAGES_DEPLOY_DIR`
+
+`CLOUDFLARE_PAGES_DEPLOY_DIR` options:
+- Omit it: deploy full built site (`site/dist`) (default)
+- Set to `site/public`: deploy static JSON-only payloads (including `predictions.json`)
+
+### 3.4 Deploy behavior
+- Pushes to `main` that touch `site/**` or the workflow file trigger deploy.
+- Manual deploy is available via **Actions** -> **Deploy Cloudflare Pages** -> **Run workflow**.
 
 ## 4) MVP operating model
 
 1. Run local publish (one-off or loop).
 2. Commit/push updated `site/public/predictions.json`.
-3. GitHub Action deploys updated site to Cloudflare Pages.
+3. GitHub Action deploys to Cloudflare Pages.
+4. Verify deployment URL in the workflow logs.

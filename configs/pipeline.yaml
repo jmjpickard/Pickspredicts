@@ -35,11 +35,14 @@ paths:
   marts: data/marts
 
 racecards:
-  days: 9
-  region: gb ire
+  days: 2
+  dates:
+    - "2026-03-10"
+    - "2026-03-11"
+  max_age_minutes: 180
+  region: gb
   scoring_courses:
-    - Catterick
-    - Thurles
+    - Cheltenham
 
 betfair:
   regions:

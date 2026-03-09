@@ -1,11 +1,11 @@
 {
-  "log_loss": 0.19561124167357924,
+  "log_loss": 0.19511109706099486,
   "model_top1_accuracy": 0.32142857142857145,
   "model_roi": 0.13714285714285715,
   "model_pnl": 3.84,
   "total_val_races": 28,
   "total_val_runners": 452,
-  "best_iteration": 57,
+  "best_iteration": 52,
   "fav_top1_accuracy": 0.32142857142857145,
   "fav_roi": 0.13714285714285715,
   "fav_pnl": 3.84

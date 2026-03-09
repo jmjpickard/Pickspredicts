@@ -25,6 +25,29 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+COURSE_TRACK_DIRECTION = {
+    "aintree": "left",
+    "catterick": "left",
+    "cheltenham": "left",
+    "leopardstown": "left",
+    "punchestown": "right",
+    "thurles": "right",
+}
+
+DOMINANT_STYLE_CODE_MAP = {
+    "front-runner": 0,
+    "prominent": 1,
+    "mid-division": 2,
+    "held-up": 3,
+    "rear": 4,
+}
+
+COMMENT_FEATURE_COLUMNS = [
+    "dominant_style_code",
+    "pct_trouble",
+    "pct_jumping_issues",
+]
+
 
 def load_config() -> dict:  # type: ignore[type-arg]
     with open(PROJECT_ROOT / "configs" / "pipeline.yaml") as f:
@@ -39,6 +62,75 @@ def _ensure_distance_m(races: pd.DataFrame) -> pd.DataFrame:
     return races
 
 
+def _ensure_track_direction(races: pd.DataFrame) -> pd.DataFrame:
+    """Ensure track_direction exists, using a curated per-course mapping."""
+    races = races.copy()
+    course_norm = races["course"].astype(str).str.strip().str.lower()
+    mapped = course_norm.map(COURSE_TRACK_DIRECTION)
+
+    if "track_direction" in races.columns:
+        existing = races["track_direction"].astype("string").str.strip().str.lower()
+        races["track_direction"] = existing.where(existing.notna() & (existing != ""), mapped)
+    else:
+        races["track_direction"] = mapped
+
+    races.loc[races["track_direction"].isna(), "track_direction"] = pd.NA
+    return races
+
+
+def _normalise_key_types(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["race_id"] = out["race_id"].astype("string").str.strip()
+    out["horse_id"] = pd.to_numeric(out["horse_id"], errors="coerce").astype("Int64")
+    out = out.dropna(subset=["race_id", "horse_id"])
+    out = out[out["race_id"] != ""]
+    out["race_id"] = out["race_id"].astype(str)
+    out["horse_id"] = out["horse_id"].astype(int)
+    return out
+
+
+def _load_comment_features(comment_path: Path) -> pd.DataFrame | None:
+    """Load and normalise comment-derived runner features if available."""
+    if not comment_path.exists():
+        return None
+
+    raw = pd.read_parquet(comment_path)
+    if raw.empty:
+        return None
+
+    features = _normalise_key_types(raw)
+    if "dominant_style_code" not in features.columns and "dominant_style" in features.columns:
+        features["dominant_style_code"] = (
+            features["dominant_style"].astype(str).str.strip().str.lower().map(DOMINANT_STYLE_CODE_MAP)
+        )
+
+    comment_cols = [c for c in COMMENT_FEATURE_COLUMNS if c in features.columns]
+    if not comment_cols:
+        return None
+
+    keep = ["race_id", "horse_id"] + comment_cols
+    features = features[keep].drop_duplicates(subset=["race_id", "horse_id"])
+    return features
+
+
+def _latest_comment_features_by_horse(
+    comment_features: pd.DataFrame,
+    historical_runners: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build latest known comment-derived profile per horse for scoring races."""
+    runners = _normalise_key_types(historical_runners[["race_id", "horse_id", "date"]])
+    runners["race_date"] = pd.to_datetime(runners["date"], errors="coerce")
+    merged = comment_features.merge(
+        runners[["race_id", "horse_id", "race_date"]],
+        on=["race_id", "horse_id"],
+        how="left",
+    )
+    merged = merged.sort_values(["horse_id", "race_date", "race_id"])
+    latest = merged.groupby("horse_id", as_index=False).tail(1)
+    keep = ["horse_id"] + [c for c in COMMENT_FEATURE_COLUMNS if c in latest.columns]
+    return latest[keep].drop_duplicates(subset=["horse_id"])
+
+
 def build_features() -> None:
     """Build all feature groups and write to marts."""
     config = load_config()
@@ -50,6 +142,7 @@ def build_features() -> None:
     races = pd.read_parquet(parquet_dir / "races.parquet")
     runners = pd.read_parquet(parquet_dir / "runners.parquet")
     races = _ensure_distance_m(races)
+    races = _ensure_track_direction(races)
 
     logger.info("Loaded %d races, %d runners", len(races), len(runners))
 
@@ -96,6 +189,14 @@ def build_features() -> None:
 
     con.close()
 
+    # Comment-derived features (if comment parsing has been run)
+    g6: pd.DataFrame | None = None
+    comment_path = marts_dir / "comment_derived_features.parquet"
+    comment_features = _load_comment_features(comment_path)
+    if comment_features is not None:
+        g6 = comment_features
+        logger.info("Loaded comment-derived features (G6): %d rows, %d features", len(g6), len(g6.columns) - 2)
+
     # Base DataFrame: keys + metadata + labels
     base = runners[["race_id", "horse_id", "date", "course", "horse_name",
                      "finish_position"]].copy()
@@ -108,6 +209,8 @@ def build_features() -> None:
     groups = [g5, g1, g2, g3, g4, g8]
     if g7 is not None:
         groups.append(g7)
+    if g6 is not None:
+        groups.append(g6)
     for group_df in groups:
         features = features.merge(group_df, on=["race_id", "horse_id"], how="left")
 
@@ -120,13 +223,16 @@ def build_features() -> None:
     # Load racecards and write to parquet for scoring
     racecard_df = load_racecards()
     racecard_path = marts_dir / "racecard_runners.parquet"
-    if not racecard_df.empty:
-        racecard_df.to_parquet(racecard_path, index=False)
-        logger.info("Written racecard_runners.parquet (%d rows)", len(racecard_df))
+    if racecard_df.empty:
+        raise RuntimeError(
+            "Racecard parsing returned zero rows after course filtering; "
+            "refusing to reuse stale scoring inputs."
+        )
+    racecard_df.to_parquet(racecard_path, index=False)
+    logger.info("Written racecard_runners.parquet (%d rows)", len(racecard_df))
 
-    if racecard_path.exists():
-        logger.info("Building 2026 scoring features from racecard data...")
-        _build_scoring_features(racecard_path, races, runners, marts_dir)
+    logger.info("Building 2026 scoring features from racecard data...")
+    _build_scoring_features(racecard_path, races, runners, marts_dir)
 
 
 def _build_scoring_features(
@@ -150,6 +256,7 @@ def _build_scoring_features(
 
     historical_races = historical_races.copy()
     historical_runners = historical_runners.copy()
+    historical_races = _ensure_track_direction(historical_races)
     historical_races["race_id"] = historical_races["race_id"].astype(str)
     historical_runners["race_id"] = historical_runners["race_id"].astype(str)
     historical_runners["horse_id"] = pd.to_numeric(
@@ -203,6 +310,7 @@ def _build_scoring_features(
     all_runners = pd.concat([historical_runners, racecard_runners], ignore_index=True)  # type: ignore[assignment]
 
     all_races = _ensure_distance_m(all_races)  # type: ignore[arg-type]
+    all_races = _ensure_track_direction(all_races)  # type: ignore[arg-type]
 
     con = duckdb.connect()
     con.register("races", all_races)
@@ -236,10 +344,32 @@ def _build_scoring_features(
 
     con.close()
 
+    # Comment-derived features for scoring:
+    # map each horse to latest known historical comment profile.
+    g6_scoring: pd.DataFrame | None = None
+    comment_path = marts_dir / "comment_derived_features.parquet"
+    comment_features = _load_comment_features(comment_path)
+    if comment_features is not None:
+        latest_by_horse = _latest_comment_features_by_horse(comment_features, historical_runners)
+        if not latest_by_horse.empty:
+            g6_scoring = racecard[["race_id", "horse_id"]].copy()
+            g6_scoring["race_id"] = g6_scoring["race_id"].astype(str)
+            g6_scoring["horse_id"] = pd.to_numeric(g6_scoring["horse_id"], errors="coerce").astype("Int64")
+            g6_scoring = g6_scoring.dropna(subset=["race_id", "horse_id"])
+            g6_scoring["horse_id"] = g6_scoring["horse_id"].astype(int)
+            g6_scoring = g6_scoring.drop_duplicates(subset=["race_id", "horse_id"])
+            g6_scoring = g6_scoring.merge(latest_by_horse, on="horse_id", how="left")
+            comment_cols = [c for c in COMMENT_FEATURE_COLUMNS if c in g6_scoring.columns]
+            if comment_cols:
+                logger.info(
+                    "Comment feature coverage for scoring: %.1f%%",
+                    100 * float(g6_scoring[comment_cols[0]].notna().mean()),
+                )
+
     scoring_meta_cols = [
         "race_id", "horse_id", "date", "course", "horse_name",
         "race_name", "race_type", "race_class", "off_time",
-        "distance_f", "pattern", "official_rating",
+        "distance_f", "pattern", "going", "official_rating",
     ]
     available_cols = [c for c in scoring_meta_cols if c in racecard.columns]
     base: pd.DataFrame = racecard[available_cols].copy()  # type: ignore[assignment]
@@ -252,6 +382,8 @@ def _build_scoring_features(
     groups_2026 = [g5, g1, g2, g3, g4, g8]
     if g7_scoring is not None:
         groups_2026.append(g7_scoring)
+    if g6_scoring is not None:
+        groups_2026.append(g6_scoring)
     for group_df in groups_2026:
         group_df = group_df.copy()
         group_df["race_id"] = group_df["race_id"].astype(str)
@@ -264,10 +396,11 @@ def _build_scoring_features(
     features_2026: pd.DataFrame = features.drop_duplicates(subset=["race_id", "horse_id"]).copy()  # type: ignore[assignment]
 
     logger.info(
-        "Scoring feature coverage — or_current: %.1f%%, sp_rank: %.1f%%, market_implied_prob: %.1f%%",
+        "Scoring feature coverage — or_current: %.1f%%, sp_rank: %.1f%%, market_implied_prob: %.1f%%, going_bucket: %.1f%%",
         100 * float(features_2026["or_current"].notna().mean()) if "or_current" in features_2026.columns else 0.0,
         100 * float(features_2026["sp_rank"].notna().mean()) if "sp_rank" in features_2026.columns else 0.0,
         100 * float(features_2026["market_implied_prob"].notna().mean()) if "market_implied_prob" in features_2026.columns else 0.0,
+        100 * float(features_2026["going_bucket"].notna().mean()) if "going_bucket" in features_2026.columns else 0.0,
     )
     features_2026.to_parquet(marts_dir / "features_2026.parquet", index=False)
     logger.info("Written features_2026.parquet (%d rows)", len(features_2026))

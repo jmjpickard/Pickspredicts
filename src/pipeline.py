@@ -71,11 +71,21 @@ def run_predict() -> None:
     predict()
 
 
-def run_parse_comments() -> None:
+def run_parse_comments(
+    mode: str = "sync",
+    batch_size: int = 100,
+    poll_secs: int = 15,
+    timeout_mins: int = 120,
+) -> None:
     from src.features.parse_comments import parse_comments
 
     logger.info("=== Parsing comments ===")
-    parse_comments()
+    parse_comments(
+        batch_size=batch_size,
+        mode=mode,
+        poll_interval_secs=poll_secs,
+        max_wait_minutes=timeout_mins,
+    )
 
 
 def run_fetch_betfair() -> None:
@@ -99,6 +109,30 @@ def main() -> None:
         choices=sorted(STEPS),
         required=True,
         help="Pipeline step to run",
+    )
+    parser.add_argument(
+        "--comment-mode",
+        choices=["sync", "batch"],
+        default="sync",
+        help="Comment parsing mode for --step parse-comments",
+    )
+    parser.add_argument(
+        "--comment-batch-size",
+        type=int,
+        default=100,
+        help="Comments per flush (sync) or API batch (batch mode) for --step parse-comments",
+    )
+    parser.add_argument(
+        "--comment-poll-secs",
+        type=int,
+        default=15,
+        help="Polling interval in seconds for comment batch mode",
+    )
+    parser.add_argument(
+        "--comment-timeout-mins",
+        type=int,
+        default=120,
+        help="Timeout in minutes per submitted comment batch",
     )
     args = parser.parse_args()
 
@@ -127,7 +161,12 @@ def main() -> None:
         run_predict()
 
     if args.step == "parse-comments":
-        run_parse_comments()
+        run_parse_comments(
+            mode=args.comment_mode,
+            batch_size=args.comment_batch_size,
+            poll_secs=args.comment_poll_secs,
+            timeout_mins=args.comment_timeout_mins,
+        )
 
     if args.step in ("fetch-betfair", "all"):
         run_fetch_betfair()

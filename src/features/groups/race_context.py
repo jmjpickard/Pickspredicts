@@ -30,6 +30,11 @@ def race_context(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
             CASE
                 WHEN pattern ILIKE '%grade 3%' THEN 1 ELSE 0
             END AS is_grade3,
+            CASE
+                WHEN LOWER(COALESCE(track_direction, '')) IN ('left', 'anti-clockwise', 'anticlockwise') THEN 0
+                WHEN LOWER(COALESCE(track_direction, '')) IN ('right', 'clockwise') THEN 1
+                ELSE NULL
+            END AS track_direction_encoded,
             distance_band,
             going_bucket
         FROM enriched

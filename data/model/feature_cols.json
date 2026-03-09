@@ -6,6 +6,7 @@
   "is_grade1",
   "is_grade2",
   "is_grade3",
+  "track_direction_encoded",
   "distance_band",
   "going_bucket",
   "or_current",
@@ -36,6 +37,8 @@
   "win_rate_going_bucket",
   "win_rate_dist_band",
   "win_rate_course",
+  "win_rate_track_direction",
+  "place_rate_track_direction",
   "trainer_winpct_14d",
   "trainer_winpct_30d",
   "trainer_winpct_90d",
@@ -57,5 +60,8 @@
   "market_implied_prob",
   "market_rank",
   "pre_price_move",
-  "market_confidence"
+  "market_confidence",
+  "dominant_style_code",
+  "pct_trouble",
+  "pct_jumping_issues"
 ]

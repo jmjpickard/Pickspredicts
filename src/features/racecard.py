@@ -13,6 +13,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from src.ingest.racecard_health import validate_racecard_files
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -141,10 +143,7 @@ def load_racecards() -> pd.DataFrame:
     racecard_dir = PROJECT_ROOT / config["paths"]["raw_racecards"]
     allowed_courses = _allowed_courses(config)
 
-    json_files = sorted(racecard_dir.glob("*.json"))
-    if not json_files:
-        logger.warning("No racecard JSON files found in %s", racecard_dir)
-        return pd.DataFrame()
+    json_files = validate_racecard_files(racecard_dir, config)
 
     frames = [parse_racecard(f, allowed_courses) for f in json_files]
     frames = [f for f in frames if not f.empty]

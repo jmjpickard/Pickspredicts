@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.ingest.racecard_health import validate_racecard_files
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -109,11 +111,98 @@ def _top_features(
     return ", ".join(parts)
 
 
+def _fmt_pct(prob: float) -> str:
+    return f"{prob * 100:.1f}%"
+
+
+def _fmt_odds(odds: float) -> str:
+    text = f"{odds:.2f}"
+    return text.rstrip("0").rstrip(".")
+
+
+def _build_race_analysis(group: pd.DataFrame, strong_thresh: float) -> str:
+    """Build deterministic race-level narrative from model + market view."""
+    if group.empty:
+        return ""
+
+    group = group.copy()
+    group = group.sort_values("win_prob", ascending=False)
+    model_top = group.iloc[0]
+    model_name = str(model_top.get("horse_name", ""))
+    model_wp = float(model_top.get("win_prob", 0.0))
+
+    with_odds = group[
+        group["best_odds"].notna()
+        & (group["best_odds"] > 1)
+        & group["value_score"].notna()
+    ].copy()
+    if with_odds.empty:
+        return (
+            f"{model_name} is top on model win chance ({_fmt_pct(model_wp)}), "
+            "but there are no usable live odds yet."
+        )
+
+    market_fav = with_odds.sort_values("best_odds", ascending=True).iloc[0]
+    value_top = with_odds.sort_values("value_score", ascending=False).iloc[0]
+
+    market_name = str(market_fav.get("horse_name", ""))
+    market_odds = float(market_fav.get("best_odds", np.nan))
+    value_name = str(value_top.get("horse_name", ""))
+    value_odds = float(value_top.get("best_odds", np.nan))
+    value_score = float(value_top.get("value_score", 0.0))
+    value_wp = float(value_top.get("win_prob", 0.0))
+    implied = float(value_top.get("implied_prob", np.nan))
+
+    positive_value = with_odds[with_odds["value_score"] > 0].copy()
+    realistic_value = positive_value[positive_value["best_odds"] <= 30].copy()
+
+    if value_score < 0:
+        return (
+            f"{model_name} leads on win chance ({_fmt_pct(model_wp)}), "
+            f"but the market looks tight around {market_name} at {_fmt_odds(market_odds)}."
+        )
+
+    if value_score < 0.02 and realistic_value.empty and not positive_value.empty:
+        outsider = positive_value.sort_values("value_score", ascending=False).iloc[0]
+        outsider_name = str(outsider.get("horse_name", ""))
+        return (
+            "Front of market is tight/fair; clean value is mostly in speculative outsiders "
+            f"such as {outsider_name}."
+        )
+
+    edge_label = "strong overlay" if value_score >= strong_thresh else "value edge"
+
+    if value_name == model_name and value_name == market_name:
+        return (
+            f"{value_name} is both model top and market favourite, and still rates as a {edge_label} "
+            f"({_fmt_pct(value_wp)} vs market {_fmt_pct(implied)})."
+        )
+
+    if value_name == model_name and value_name != market_name:
+        return (
+            f"{value_name} is model top and the best value angle at {_fmt_odds(value_odds)} "
+            f"({_fmt_pct(value_wp)} vs market {_fmt_pct(implied)}), ahead of market favourite {market_name}."
+        )
+
+    if value_name != model_name:
+        return (
+            f"{model_name} leads on pure win chance ({_fmt_pct(model_wp)}), but {value_name} has the best value case "
+            f"at {_fmt_odds(value_odds)} ({_fmt_pct(value_wp)} vs market {_fmt_pct(implied)})."
+        )
+
+    return (
+        f"{model_name} leads at {_fmt_pct(model_wp)} and remains a fair value play at {_fmt_odds(value_odds)}."
+    )
+
+
 def predict() -> None:
     """Score runners, compute Harville place probs, value overlay, and save predictions."""
     config = load_config()
     model_cfg = config["model"]
     output_dir = PROJECT_ROOT / model_cfg["output_dir"]
+    racecard_dir = PROJECT_ROOT / config["paths"]["raw_racecards"]
+    racecard_files = validate_racecard_files(racecard_dir, config)
+    latest_racecard_mtime = max(path.stat().st_mtime for path in racecard_files)
 
     # --- Load model ---
     model_path = output_dir / "model.txt"
@@ -135,14 +224,29 @@ def predict() -> None:
             "features_2026.parquet not found. Refusing to fall back to historical validation data. "
             "Run --step fetch-racecards and --step features first."
         )
-        return
+        raise RuntimeError("Missing features_2026.parquet")
+    if features_2026.stat().st_mtime < latest_racecard_mtime:
+        raise RuntimeError(
+            "features_2026.parquet is older than the latest racecard JSON. "
+            "Run --step features before --step predict."
+        )
     df = pd.read_parquet(features_2026)
     if df.empty:
         logger.error(
             "features_2026.parquet is empty. Ensure Cheltenham 2026 racecards were fetched, then rerun --step features."
         )
-        return
+        raise RuntimeError("features_2026.parquet is empty")
     logger.info("Loaded features_2026: %s", df.shape)
+
+    if "going_bucket" in df.columns:
+        missing_going = df["going_bucket"].isna()
+        if missing_going.any():
+            logger.warning(
+                "Going is missing for %d/%d runners across %d races; rerun fetch-racecards before final bet decisions.",
+                int(missing_going.sum()),
+                len(df),
+                int(df.loc[missing_going, "race_id"].nunique()),
+            )
 
     # --- Score ---
     df["raw_prob"] = booster.predict(df[feature_cols], num_iteration=booster.best_iteration)
@@ -218,7 +322,7 @@ def predict() -> None:
     # Include metadata if available for context
     extra_cols = ["date", "course", "race_name", "race_type", "race_class",
                   "off_time", "distance_f", "is_handicap", "pattern",
-                  "official_rating", "best_odds"]
+                  "going", "official_rating", "best_odds"]
     for extra in extra_cols:
         if extra in df.columns and extra not in output_cols:
             output_cols.append(extra)
@@ -233,13 +337,14 @@ def predict() -> None:
     # JSON grouped by race
     races_json: list[dict[str, Any]] = []
     race_meta_fields = ["date", "course", "race_name", "race_type", "race_class",
-                        "off_time", "distance_f", "is_handicap", "pattern"]
+                        "off_time", "distance_f", "is_handicap", "pattern", "going"]
     for _race_id, group in out_df.groupby("race_id"):
         race_info: dict[str, Any] = {"race_id": str(_race_id)}
         for field in race_meta_fields:
             if field in group.columns:
                 val = group[field].iloc[0]
                 race_info[field] = None if pd.isna(val) else str(val)  # type: ignore[arg-type]
+        race_info["analysis"] = _build_race_analysis(group, strong_thresh=strong_thresh)
         runners_list: list[dict[str, Any]] = []
         for row_idx in range(len(group)):
             r = group.iloc[row_idx]
