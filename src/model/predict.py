@@ -32,6 +32,11 @@ META_COLS = {
 }
 
 PLAN_A_POINTS_LADDER = [2.0, 1.5, 1.5, 1.5, 1.5, 1.0, 1.0]
+PLAN_A_MIN_PICKS = 4
+PLAN_A_MAX_STAKE = 3.0
+PLAN_A_FALLBACK_MIN_VALUE = -0.005
+PLAN_A_FALLBACK_MIN_WIN_PROB = 0.10
+PLAN_A_FALLBACK_MAX_ODDS = 20.0
 
 
 def load_config() -> dict[str, Any]:
@@ -210,6 +215,86 @@ def _select_plan_a_runner(group: pd.DataFrame, strong_thresh: float) -> pd.Serie
     return _plan_a_sanity_review(candidate, with_odds, strong_thresh)
 
 
+def _select_plan_a_fallback_runner(group: pd.DataFrame, strong_thresh: float) -> pd.Series | None:
+    """Fallback selector for compact cards: near-fair prices with solid win chance."""
+    if group.empty:
+        return None
+    ordered = group.sort_values("win_prob", ascending=False)
+    with_odds, _ = _value_views(ordered)
+    if with_odds.empty:
+        return None
+
+    fallback = with_odds[
+        (with_odds["value_score"] >= PLAN_A_FALLBACK_MIN_VALUE)
+        & (with_odds["win_prob"] >= PLAN_A_FALLBACK_MIN_WIN_PROB)
+        & (with_odds["best_odds"] <= PLAN_A_FALLBACK_MAX_ODDS)
+    ].copy()
+    if fallback.empty:
+        return None
+
+    fallback["plan_a_score"] = fallback.apply(_plan_a_score, axis=1)
+    candidate = fallback.sort_values(
+        ["plan_a_score", "value_score", "win_prob"],
+        ascending=[False, False, False],
+    ).iloc[0]
+    return _plan_a_sanity_review(candidate, with_odds, strong_thresh)
+
+
+def _stake_points_for_count(count: int) -> list[float]:
+    if count <= 0:
+        return []
+    if count == 1:
+        return [10.0]
+    if count == 2:
+        return [6.0, 4.0]
+    if count == 3:
+        return [4.0, 3.0, 3.0]
+    if count == 4:
+        return [3.5, 2.5, 2.0, 2.0]
+    if count == 5:
+        return [3.0, 2.0, 2.0, 1.5, 1.5]
+    if count == 6:
+        return [2.5, 2.0, 1.5, 1.5, 1.5, 1.0]
+    if count == 7:
+        return PLAN_A_POINTS_LADDER.copy()
+    points = PLAN_A_POINTS_LADDER + [0.5] * (count - len(PLAN_A_POINTS_LADDER))
+    scale = 10.0 / sum(points)
+    scaled = [p * scale for p in points]
+    return scaled
+
+
+def _cap_and_redistribute_points(points: list[float], cap: float) -> list[float]:
+    if not points:
+        return points
+
+    adjusted = points[:]
+    for _ in range(len(adjusted) * 4):
+        over = [idx for idx, val in enumerate(adjusted) if val > cap + 1e-9]
+        if not over:
+            break
+
+        excess = sum(adjusted[idx] - cap for idx in over)
+        for idx in over:
+            adjusted[idx] = cap
+
+        under = [idx for idx, val in enumerate(adjusted) if val < cap - 1e-9]
+        if not under or excess <= 1e-9:
+            break
+
+        weight_total = sum(adjusted[idx] for idx in under)
+        if weight_total <= 0:
+            share = excess / len(under)
+            for idx in under:
+                adjusted[idx] += share
+        else:
+            for idx in under:
+                adjusted[idx] += excess * (adjusted[idx] / weight_total)
+
+    rounded = [round(val, 2) for val in adjusted]
+    rounded[0] = round(rounded[0] + (10.0 - sum(rounded)), 2)
+    return rounded
+
+
 def _build_plan_a_points(
     out_df: pd.DataFrame,
     strong_thresh: float,
@@ -225,8 +310,11 @@ def _build_plan_a_points(
     working["date"] = working["date"].astype(str).str[:10]
 
     for date, day_group in working.groupby("date"):
+        race_groups = {str(race_id): race_group for race_id, race_group in day_group.groupby("race_id")}
         race_candidates: list[dict[str, object]] = []
-        for race_id, race_group in day_group.groupby("race_id"):
+        selected_races: set[str] = set()
+
+        for race_id, race_group in race_groups.items():
             selected = _select_plan_a_runner(race_group, strong_thresh=strong_thresh)
             if selected is None:
                 continue
@@ -236,31 +324,39 @@ def _build_plan_a_points(
                 "horse_id": str(selected.get("horse_id")),
                 "score": _plan_a_score(selected),
             })
+            selected_races.add(str(race_id))
+
+        if len(race_candidates) < PLAN_A_MIN_PICKS:
+            fallback_pool: list[dict[str, object]] = []
+            for race_id, race_group in race_groups.items():
+                if race_id in selected_races:
+                    continue
+                fallback = _select_plan_a_fallback_runner(race_group, strong_thresh=strong_thresh)
+                if fallback is None:
+                    continue
+                fallback_pool.append({
+                    "date": str(date),
+                    "race_id": str(race_id),
+                    "horse_id": str(fallback.get("horse_id")),
+                    "score": _plan_a_score(fallback),
+                })
+
+            need = PLAN_A_MIN_PICKS - len(race_candidates)
+            fallback_pool = sorted(
+                fallback_pool,
+                key=lambda item: float(item["score"]),
+                reverse=True,
+            )
+            race_candidates.extend(fallback_pool[:need])
 
         if not race_candidates:
             continue
 
         ranked = sorted(race_candidates, key=lambda item: float(item["score"]), reverse=True)
         count = len(ranked)
-        if count == 1:
-            points = [10.0]
-        elif count == 2:
-            points = [6.0, 4.0]
-        elif count == 3:
-            points = [4.0, 3.0, 3.0]
-        elif count == 4:
-            points = [3.5, 2.5, 2.0, 2.0]
-        elif count == 5:
-            points = [3.0, 2.0, 2.0, 1.5, 1.5]
-        elif count == 6:
-            points = [2.5, 2.0, 1.5, 1.5, 1.5, 1.0]
-        elif count == 7:
-            points = PLAN_A_POINTS_LADDER.copy()
-        else:
-            points = PLAN_A_POINTS_LADDER + [0.5] * (count - len(PLAN_A_POINTS_LADDER))
-            scale = 10.0 / sum(points)
-            points = [round(p * scale, 2) for p in points]
-            points[0] = round(points[0] + (10.0 - sum(points)), 2)
+        points = _stake_points_for_count(count)
+        effective_cap = max(PLAN_A_MAX_STAKE, 10.0 / count)
+        points = _cap_and_redistribute_points(points, effective_cap)
 
         for item, pts in zip(ranked, points):
             key = (str(item["race_id"]), str(item["horse_id"]))
