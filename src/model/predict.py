@@ -152,30 +152,62 @@ def _plan_a_score(row: pd.Series) -> float:
     return score
 
 
+def _plan_a_sanity_review(
+    selected: pd.Series,
+    with_odds: pd.DataFrame,
+    strong_thresh: float,
+) -> pd.Series:
+    """Prefer a fair, dominant market leader over a marginal outsider edge."""
+    if with_odds.empty:
+        return selected
+
+    market_leader = with_odds.iloc[0]
+    if str(selected.get("horse_id")) == str(market_leader.get("horse_id")):
+        return selected
+
+    selected_win = float(selected.get("win_prob", 0.0))
+    selected_value = float(selected.get("value_score", 0.0))
+    leader_win = float(market_leader.get("win_prob", 0.0))
+    leader_value = float(market_leader.get("value_score", 0.0))
+
+    if (
+        leader_win >= 0.30
+        and leader_value >= 0.0
+        and selected_win < 0.12
+        and selected_value < strong_thresh
+        and (selected_value - leader_value) <= 0.04
+    ):
+        return market_leader
+
+    return selected
+
+
 def _select_plan_a_runner(group: pd.DataFrame, strong_thresh: float) -> pd.Series | None:
     if group.empty:
         return None
     ordered = group.sort_values("win_prob", ascending=False)
     with_odds, realistic = _value_views(ordered)
+    candidate: pd.Series | None = None
 
     if not realistic.empty:
-        return realistic.sort_values(
+        candidate = realistic.sort_values(
             ["value_score", "win_prob"],
             ascending=[False, False],
         ).iloc[0]
-
-    if not with_odds.empty:
+    elif not with_odds.empty:
         strong = with_odds[
             (with_odds["value_score"] >= strong_thresh)
             & (with_odds["win_prob"] >= 0.12)
         ].copy()
         if not strong.empty:
-            return strong.sort_values(
+            candidate = strong.sort_values(
                 ["value_score", "win_prob"],
                 ascending=[False, False],
             ).iloc[0]
 
-    return None
+    if candidate is None:
+        return None
+    return _plan_a_sanity_review(candidate, with_odds, strong_thresh)
 
 
 def _build_plan_a_points(

@@ -30,7 +30,7 @@ const dayPlanA = dayRaces
     horseName: race.plan_a_pick_horse_name ?? "",
     points: race.plan_a_points ?? 0,
   }))
-  .sort((a, b) => (b.points - a.points) || a.offTime.localeCompare(b.offTime));
+  .sort((a, b) => a.offTime.localeCompare(b.offTime) || (b.points - a.points));
 
 const dayPlanATotal = dayPlanA.reduce((sum, pick) => sum + pick.points, 0);
 

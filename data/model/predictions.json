@@ -12,9 +12,9 @@
     "pattern": "Grade 1",
     "going": "Good To Soft",
     "analysis": "Best priced edges are Steel Ally and Jax Junior.",
-    "plan_a_pick_horse_id": "4656831",
-    "plan_a_pick_horse_name": "Steel Ally",
-    "plan_a_points": 1.0,
+    "plan_a_pick_horse_id": "6577926",
+    "plan_a_pick_horse_name": "Lulamba",
+    "plan_a_points": 1.5,
     "runners": [
       {
         "horse_id": "6577926",
@@ -26,7 +26,8 @@
         "verdict": "Fair price",
         "top_features": "sp_rank(+1.592), market_confidence(-0.402), market_implied_prob(+0.357)",
         "official_rating": 163,
-        "best_odds": 2.58
+        "best_odds": 2.58,
+        "plan_a_points": 1.5
       },
       {
         "horse_id": "5713791",
@@ -62,8 +63,7 @@
         "verdict": "Fair price",
         "top_features": "sp_rank(+0.302), market_confidence(-0.192), market_implied_prob(-0.091)",
         "official_rating": 153,
-        "best_odds": 16.5,
-        "plan_a_points": 1.0
+        "best_odds": 16.5
       },
       {
         "horse_id": "5528652",
@@ -3570,7 +3570,7 @@
     "analysis": "Market fav looks short; Quebecois is best value play.",
     "plan_a_pick_horse_id": "4922466",
     "plan_a_pick_horse_name": "Quebecois",
-    "plan_a_points": 1.5,
+    "plan_a_points": 1.0,
     "runners": [
       {
         "horse_id": "4658876",
@@ -3595,7 +3595,7 @@
         "top_features": "sp_rank(+0.686), market_confidence(-0.179), or_trend_last5(+0.146)",
         "official_rating": 139,
         "best_odds": 13.5,
-        "plan_a_points": 1.5
+        "plan_a_points": 1.0
       },
       {
         "horse_id": "3837375",
