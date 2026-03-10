@@ -62,9 +62,9 @@ def get_configured_racecard_dates(config: dict[str, Any]) -> list[str] | None:
 
 def get_racecard_days(config: dict[str, Any]) -> int:
     days = _to_int(config["racecards"]["days"], name="racecards.days")
-    if not (1 <= days <= 2):
+    if not (1 <= days <= 4):
         raise ValueError(
-            f"racecards.days must be between 1 and 2 for rpscrape racecards.py. Got: {days}"
+            f"racecards.days must be between 1 and 4. Got: {days}"
         )
     return days
 

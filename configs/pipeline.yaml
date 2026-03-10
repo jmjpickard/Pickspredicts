@@ -35,10 +35,12 @@ paths:
   marts: data/marts
 
 racecards:
-  days: 2
+  days: 4
   dates:
     - "2026-03-10"
     - "2026-03-11"
+    - "2026-03-12"
+    - "2026-03-13"
   max_age_minutes: 180
   region: gb
   scoring_courses:
