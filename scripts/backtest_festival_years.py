@@ -1,7 +1,8 @@
-"""Walk-forward backtest for Cheltenham festival years.
+"""Walk-forward backtest for festival years (Cheltenham + Aintree).
 
-Runs strict train-before-validation backtests for selected years, then reports:
+Runs strict train-before-validation backtests for selected windows, then reports:
 - log loss
+- mean reciprocal rank (MRR)
 - top-pick accuracy / ROI
 - favourite baseline
 - "Strong value" win + each-way ROI
@@ -9,7 +10,8 @@ Runs strict train-before-validation backtests for selected years, then reports:
 
 Usage:
     .venv/bin/python scripts/backtest_festival_years.py
-    .venv/bin/python scripts/backtest_festival_years.py --years 2023 2024 2025 --json-out data/model/backtest/festival_years.json
+    .venv/bin/python scripts/backtest_festival_years.py --windows cheltenham_2025 aintree_2025
+    .venv/bin/python scripts/backtest_festival_years.py --json-out data/model/backtest/festival_years.json
 """
 
 from __future__ import annotations
@@ -39,21 +41,31 @@ META_COLS = {
     "placed",
 }
 
-FESTIVAL_WINDOWS = {
-    2023: ("2023-03-14", "2023-03-17"),
-    2024: ("2024-03-12", "2024-03-15"),
-    2025: ("2025-03-11", "2025-03-14"),
+# All available festival windows. Each entry is a named test window.
+# Train set: all data with date < start. Val set: course + date range.
+FESTIVAL_WINDOWS: dict[str, tuple[str, str, str]] = {
+    # name → (course, start, end)
+    "cheltenham_2023": ("Cheltenham", "2023-03-14", "2023-03-17"),
+    "cheltenham_2024": ("Cheltenham", "2024-03-12", "2024-03-15"),
+    "cheltenham_2025": ("Cheltenham", "2025-03-11", "2025-03-14"),
+    "aintree_2023": ("Aintree", "2023-04-13", "2023-04-15"),
+    "aintree_2024": ("Aintree", "2024-04-11", "2024-04-13"),
+    "aintree_2025": ("Aintree", "2025-04-03", "2025-04-05"),
 }
+
+DEFAULT_WINDOWS = list(FESTIVAL_WINDOWS.keys())
 
 
 @dataclass
 class BacktestResult:
-    year: int
+    window: str
+    course: str
     train_rows: int
     val_rows: int
     val_races: int
     best_iteration: int
     log_loss: float
+    mrr: float
     top1_accuracy: float
     top1_roi: float
     top1_pnl: float
@@ -94,6 +106,20 @@ def _bootstrap_ci(
     return float(lo), float(hi)
 
 
+def _mean_reciprocal_rank(val_df: pd.DataFrame) -> float:
+    """MRR: for each race rank horses by win_prob desc, return mean(1/rank_of_winner)."""
+    mrr_vals: list[float] = []
+    for _, race in val_df.groupby("race_id"):
+        race_sorted = race.sort_values("win_prob", ascending=False).reset_index(drop=True)
+        winners = race_sorted[race_sorted["won"] == 1]
+        if winners.empty:
+            continue
+        # rank is 1-indexed position of the winner in our ordering
+        rank = int(winners.index[0]) + 1
+        mrr_vals.append(1.0 / rank)
+    return float(np.mean(mrr_vals)) if mrr_vals else 0.0
+
+
 def _win_returns(df: pd.DataFrame) -> np.ndarray[Any, np.dtype[np.float64]]:
     return np.where(df["won"] == 1, df["sp_decimal"] - 1, -1.0).astype(np.float64)
 
@@ -125,8 +151,8 @@ def _ew_returns(df: pd.DataFrame, races: pd.DataFrame) -> np.ndarray[Any, np.dty
     return ew
 
 
-def evaluate_year(
-    year: int,
+def evaluate_window(
+    window_name: str,
     start: str,
     end: str,
     course: str,
@@ -180,12 +206,15 @@ def evaluate_year(
     val_df["raw_prob"] = booster.predict(val_df[feature_cols], num_iteration=booster.best_iteration)
     val_df["win_prob"] = _softmax_per_race(val_df, "raw_prob")
     ll = float(log_loss(val_df["won"], val_df["win_prob"]))
+    mrr = _mean_reciprocal_rank(val_df)
 
     # Model top pick
     top_idx = val_df.groupby("race_id")["win_prob"].idxmax()
     top_picks = val_df.loc[top_idx].copy()
     top_returns = _win_returns(top_picks)
-    top_ci = _bootstrap_ci(top_returns, n_bootstrap=n_bootstrap, seed=seed + year)
+    # Use a stable hash of window_name as the seed offset
+    window_seed = abs(hash(window_name)) % 100000
+    top_ci = _bootstrap_ci(top_returns, n_bootstrap=n_bootstrap, seed=seed + window_seed)
 
     top1_acc = float((top_picks["won"] == 1).mean()) if len(top_picks) else 0.0
     top1_roi = float(top_returns.mean()) if len(top_returns) else 0.0
@@ -222,19 +251,21 @@ def evaluate_year(
         ).astype(np.float64)
         strong_win_roi = float(strong_win.mean())
         strong_win_pnl = float(strong_win.sum())
-        strong_win_ci = _bootstrap_ci(strong_win, n_bootstrap=n_bootstrap, seed=seed + 1000 + year)
+        strong_win_ci = _bootstrap_ci(strong_win, n_bootstrap=n_bootstrap, seed=seed + 1000 + window_seed)
 
         strong_ew = _ew_returns(strong_picks, races)
         strong_ew_roi = float(strong_ew.mean())
         strong_ew_pnl = float(strong_ew.sum())
 
     return BacktestResult(
-        year=year,
+        window=window_name,
+        course=course,
         train_rows=len(train_df),
         val_rows=len(val_df),
         val_races=int(val_df["race_id"].nunique()),
         best_iteration=int(booster.best_iteration),
         log_loss=ll,
+        mrr=mrr,
         top1_accuracy=top1_acc,
         top1_roi=top1_roi,
         top1_pnl=top1_pnl,
@@ -256,13 +287,12 @@ def evaluate_year(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Festival walk-forward backtest")
     parser.add_argument(
-        "--years",
+        "--windows",
         nargs="+",
-        type=int,
-        default=[2023, 2024, 2025],
-        help="Festival years to evaluate",
+        default=DEFAULT_WINDOWS,
+        choices=list(FESTIVAL_WINDOWS.keys()),
+        help="Festival windows to evaluate (default: all)",
     )
-    parser.add_argument("--course", default="Cheltenham", help="Validation course")
     parser.add_argument(
         "--strong-threshold",
         type=float,
@@ -302,15 +332,13 @@ def main() -> None:
     feature_cols = [c for c in features.columns if c not in META_COLS]
 
     results: list[BacktestResult] = []
-    for year in args.years:
-        if year not in FESTIVAL_WINDOWS:
-            raise ValueError(f"No configured festival window for year {year}")
-        start, end = FESTIVAL_WINDOWS[year]
-        result = evaluate_year(
-            year=year,
+    for window_name in args.windows:
+        course, start, end = FESTIVAL_WINDOWS[window_name]
+        result = evaluate_window(
+            window_name=window_name,
             start=start,
             end=end,
-            course=args.course,
+            course=course,
             strong_threshold=strong_threshold,
             n_bootstrap=args.bootstrap_samples,
             seed=args.seed,
@@ -323,16 +351,19 @@ def main() -> None:
         results.append(result)
 
     print(
-        "year  races  logloss  top1_acc  top1_roi  fav_roi  strong_bets  strong_win_roi  strong_ew_roi"
+        f"{'window':<20}  races  logloss     mrr  top1_acc  top1_roi  fav_roi"
     )
     for row in results:
-        strong_win = f"{row.strong_win_roi:+.3f}" if row.strong_win_roi is not None else "NA"
-        strong_ew = f"{row.strong_ew_roi:+.3f}" if row.strong_ew_roi is not None else "NA"
         print(
-            f"{row.year}  {row.val_races:>5}  {row.log_loss:>7.4f}  "
-            f"{row.top1_accuracy:>8.3f}  {row.top1_roi:>8.3f}  {row.fav_roi:>7.3f}  "
-            f"{row.strong_bets:>11}  {strong_win:>14}  {strong_ew:>13}"
+            f"{row.window:<20}  {row.val_races:>5}  {row.log_loss:>7.4f}  {row.mrr:>6.4f}  "
+            f"{row.top1_accuracy:>8.3f}  {row.top1_roi:>8.3f}  {row.fav_roi:>7.3f}"
         )
+
+    if len(results) > 1:
+        pooled_ll = float(np.mean([r.log_loss for r in results]))
+        pooled_mrr = float(np.mean([r.mrr for r in results]))
+        pooled_top1 = float(np.mean([r.top1_accuracy for r in results]))
+        print(f"\nPooled ({len(results)} windows): log_loss={pooled_ll:.4f}  mrr={pooled_mrr:.4f}  top1={pooled_top1:.3f}")
 
     out_path = PROJECT_ROOT / args.json_out
     out_path.parent.mkdir(parents=True, exist_ok=True)
