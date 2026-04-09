@@ -1,21 +1,22 @@
 ---
-import { toNumber, type Race } from "../types";
+import { raceHasResults, topPickSettled, topPickWinPl, toNumber, type Race } from "../types";
 
 interface Props {
   races: Race[];
+  allRaces?: Race[];
   label: string;
 }
 
-const { races, label } = Astro.props;
+const { races, allRaces = races, label } = Astro.props;
 
-const totalBets = races.reduce((s, r) => s + (toNumber(r.num_bets) ?? 0), 0);
-
-// Use the last race's cumulative values for this set
-const lastRace = races[races.length - 1];
-const dayWinPl = races.reduce((s, r) => s + (toNumber(r.race_win_pl) ?? 0), 0);
-const dayEwPl = races.reduce((s, r) => s + (toNumber(r.race_ew_pl) ?? 0), 0);
-const cumWinPl = toNumber(lastRace?.cumulative_win_pl) ?? 0;
-const cumEwPl = toNumber(lastRace?.cumulative_ew_pl) ?? 0;
+const settledRaces = races.filter((race) => raceHasResults(race));
+const totalBets = settledRaces.reduce((s, r) => s + (toNumber(r.num_bets) ?? 0), 0);
+const daySettledTopPicks = settledRaces.filter((race) => topPickSettled(race));
+const festivalSettledTopPicks = allRaces.filter((race) => topPickSettled(race));
+const dayTopPickPl = daySettledTopPicks.reduce((sum, race) => sum + (topPickWinPl(race) ?? 0), 0);
+const festivalTopPickPl = festivalSettledTopPicks.reduce((sum, race) => sum + (topPickWinPl(race) ?? 0), 0);
+const dayWinPl = settledRaces.reduce((s, r) => s + (toNumber(r.race_win_pl) ?? 0), 0);
+const dayEwPl = settledRaces.reduce((s, r) => s + (toNumber(r.race_ew_pl) ?? 0), 0);
 
 function plStr(v: number): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
@@ -28,39 +29,45 @@ function plColor(v: number): string {
 }
 ---
 
-{totalBets > 0 && (
+{(daySettledTopPicks.length > 0 || totalBets > 0) && (
   <div class="rounded-lg border border-gray-200 bg-white p-4 mb-5">
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div>
         <h3 class="text-sm font-semibold text-gray-700">{label}</h3>
-        <p class="text-xs text-gray-400 mt-0.5">{totalBets} bets ({races.length} races)</p>
+        <p class="text-xs text-gray-400 mt-0.5">
+          Top-pick benchmark first, strong-value overlay second.
+        </p>
       </div>
       <div class="flex gap-6">
         <div class="text-center">
-          <p class="text-xs text-gray-500 uppercase tracking-wide">1pt Win</p>
+          <p class="text-xs text-gray-500 uppercase tracking-wide">Top-1 Day</p>
+          <p class={`text-lg font-bold tabular-nums ${plColor(dayTopPickPl)}`}>
+            {plStr(dayTopPickPl)}
+          </p>
+        </div>
+        <div class="text-center">
+          <p class="text-xs text-gray-500 uppercase tracking-wide">Top-1 Festival</p>
+          <p class={`text-lg font-bold tabular-nums ${plColor(festivalTopPickPl)}`}>
+            {plStr(festivalTopPickPl)}
+          </p>
+        </div>
+        <div class="text-center border-l border-gray-200 pl-6">
+          <p class="text-xs text-gray-500 uppercase tracking-wide">Value Win</p>
           <p class={`text-lg font-bold tabular-nums ${plColor(dayWinPl)}`}>
             {plStr(dayWinPl)}
           </p>
         </div>
         <div class="text-center">
-          <p class="text-xs text-gray-500 uppercase tracking-wide">1pt E/W</p>
+          <p class="text-xs text-gray-500 uppercase tracking-wide">Value E/W</p>
           <p class={`text-lg font-bold tabular-nums ${plColor(dayEwPl)}`}>
             {plStr(dayEwPl)}
           </p>
         </div>
-        <div class="text-center border-l border-gray-200 pl-6">
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Cumul. Win</p>
-          <p class={`text-lg font-bold tabular-nums ${plColor(cumWinPl)}`}>
-            {plStr(cumWinPl)}
-          </p>
-        </div>
-        <div class="text-center">
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Cumul. E/W</p>
-          <p class={`text-lg font-bold tabular-nums ${plColor(cumEwPl)}`}>
-            {plStr(cumEwPl)}
-          </p>
-        </div>
       </div>
     </div>
+    <p class="mt-3 text-xs text-gray-400">
+      {settledRaces.length}/{races.length} race{races.length === 1 ? "" : "s"} settled,
+      {" "}{totalBets} strong-value bet{totalBets === 1 ? "" : "s"} settled.
+    </p>
   </div>
 )}

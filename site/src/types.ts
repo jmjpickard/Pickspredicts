@@ -88,6 +88,39 @@ export function raceHasResults(race: Race): boolean {
   return race.runners.some((runner) => toNumber(runner.finish_position) !== null);
 }
 
+export function getTopPick(race: Race): Runner | null {
+  if (race.runners.length === 0) {
+    return null;
+  }
+
+  return [...race.runners].sort((a, b) => b.win_prob - a.win_prob)[0] ?? null;
+}
+
+export function topPickSettled(race: Race): boolean {
+  return toNumber(getTopPick(race)?.finish_position) !== null;
+}
+
+export function topPickWon(race: Race): boolean | null {
+  const topPick = getTopPick(race);
+  const finishPosition = toNumber(topPick?.finish_position);
+  if (finishPosition === null) {
+    return null;
+  }
+  return finishPosition === 1;
+}
+
+export function topPickWinPl(race: Race): number | null {
+  const topPick = getTopPick(race);
+  const finishPosition = toNumber(topPick?.finish_position);
+  const spDecimal = toNumber(topPick?.sp_decimal);
+
+  if (finishPosition === null || spDecimal === null) {
+    return null;
+  }
+
+  return finishPosition === 1 ? spDecimal - 1 : -1;
+}
+
 function formatDayLabel(dateStr: string): string {
   const date = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(date.getTime())) {

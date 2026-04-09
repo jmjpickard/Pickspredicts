@@ -77,8 +77,8 @@ const dayHasRaces = dayRaces.length > 0;
       </section>
     )}
 
-    {hasResults && settledDayRaces.some((race) => (toNumber(race.num_bets) ?? 0) > 0) && (
-      <ReturnsBanner races={settledDayRaces} label={`${selectedLabel} Returns`} />
+    {hasResults && settledDayRaces.length > 0 && (
+      <ReturnsBanner allRaces={races} races={dayRaces} label={`${selectedLabel} Returns`} />
     )}
 
     {!dayHasRaces ? (

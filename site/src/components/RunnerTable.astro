@@ -1,5 +1,5 @@
 ---
-import { toBoolean, toNumber, type Runner } from "../types";
+import { getTopPick, toBoolean, toNumber, type Race, type Runner } from "../types";
 
 interface Props {
   runners: Runner[];
@@ -7,6 +7,8 @@ interface Props {
 }
 
 const { runners, showResults = false } = Astro.props;
+const pseudoRace: Race = { race_id: "table", runners };
+const topPickHorseId = getTopPick(pseudoRace)?.horse_id;
 
 const sorted = [...runners].sort((a, b) => {
   const aValue = toNumber(a.value_score);
@@ -130,6 +132,11 @@ function valueLabel(v: number | string | null): string {
                 <span class="inline-block w-2 h-2 rounded-full bg-amber-400 shrink-0" />
               )}
               <span class="font-medium text-gray-900">{runner.horse_name}</span>
+              {runner.horse_id === topPickHorseId && (
+                <span class="inline-block rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold uppercase leading-none text-amber-800">
+                  Top Pick
+                </span>
+              )}
               {toBoolean(runner.is_bet) && (
                 <span class="inline-block rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-bold text-emerald-700 uppercase leading-none">
                   Bet

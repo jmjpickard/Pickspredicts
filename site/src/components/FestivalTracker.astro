@@ -1,5 +1,13 @@
 ---
-import { getRaceDays, raceHasResults, toNumber, type Race } from "../types";
+import {
+  getRaceDays,
+  raceHasResults,
+  toNumber,
+  topPickSettled,
+  topPickWinPl,
+  topPickWon,
+  type Race,
+} from "../types";
 
 interface Props {
   races: Race[];
@@ -18,31 +26,37 @@ const totalStrongSelections = races.reduce(
   0,
 );
 const totalPlanPoints = races.reduce((sum, race) => sum + (toNumber(race.plan_a_points) ?? 0), 0);
+const topPickBookPoints = totalRaces;
 
 const settledRaces = races.filter((race) => raceHasResults(race));
 const settledRaceCount = settledRaces.length;
 const settledBets = races.reduce((sum, race) => sum + (toNumber(race.num_bets) ?? 0), 0);
 const totalWinPl = races.reduce((sum, race) => sum + (toNumber(race.race_win_pl) ?? 0), 0);
 const totalEwPl = races.reduce((sum, race) => sum + (toNumber(race.race_ew_pl) ?? 0), 0);
+const settledTopPickRaces = races.filter((race) => topPickSettled(race));
+const settledTopPickCount = settledTopPickRaces.length;
+const topPickWins = settledTopPickRaces.filter((race) => topPickWon(race)).length;
+const totalTopPickPl = settledTopPickRaces.reduce((sum, race) => sum + (topPickWinPl(race) ?? 0), 0);
 
-const topPickWins = settledRaces.filter((race) => {
-  const ordered = [...race.runners].sort((a, b) => b.win_prob - a.win_prob);
-  const topPick = ordered[0];
-  return toNumber(topPick?.finish_position) === 1;
-}).length;
-
-const topPickAccuracy = settledRaceCount > 0
-  ? (topPickWins / settledRaceCount) * 100
+const topPickAccuracy = settledTopPickCount > 0
+  ? (topPickWins / settledTopPickCount) * 100
+  : null;
+const topPickRoi = settledTopPickCount > 0
+  ? (totalTopPickPl / settledTopPickCount) * 100
   : null;
 
 const daySummaries = days.map((day) => {
   const dayRaces = races.filter((race) => race.date?.startsWith(day.date));
   const daySettledRaces = dayRaces.filter((race) => raceHasResults(race));
+  const daySettledTopPickRaces = dayRaces.filter((race) => topPickSettled(race));
   const strongSelections = dayRaces.reduce(
     (sum, race) => sum + race.runners.filter((runner) => runner.verdict === "Strong value").length,
     0,
   );
   const planPoints = dayRaces.reduce((sum, race) => sum + (toNumber(race.plan_a_points) ?? 0), 0);
+  const topPickPl = daySettledTopPickRaces.reduce((sum, race) => sum + (topPickWinPl(race) ?? 0), 0);
+  const topPickWins = daySettledTopPickRaces.filter((race) => topPickWon(race)).length;
+  const valueEwPl = dayRaces.reduce((sum, race) => sum + (toNumber(race.race_ew_pl) ?? 0), 0);
   const winPl = dayRaces.reduce((sum, race) => sum + (toNumber(race.race_win_pl) ?? 0), 0);
   const bets = dayRaces.reduce((sum, race) => sum + (toNumber(race.num_bets) ?? 0), 0);
 
@@ -51,8 +65,12 @@ const daySummaries = days.map((day) => {
     label: day.label,
     races: dayRaces.length,
     settledRaces: daySettledRaces.length,
+    settledTopPickRaces: daySettledTopPickRaces.length,
     strongSelections,
     planPoints,
+    topPickPl,
+    topPickWins,
+    valueEwPl,
     winPl,
     bets,
   };
@@ -110,14 +128,14 @@ function scoreClass(value: number | null): string {
             <p class="mt-1 text-sm text-emerald-100/75">{totalRunners} runners across three days</p>
           </div>
           <div>
-            <p class="text-xs uppercase tracking-[0.24em] text-emerald-200">Strong Value</p>
-            <p class="mt-2 text-3xl font-semibold tabular-nums">{totalStrongSelections}</p>
-            <p class="mt-1 text-sm text-emerald-100/75">Selections currently flagged as overlays</p>
+            <p class="text-xs uppercase tracking-[0.24em] text-emerald-200">Top-1 Book</p>
+            <p class="mt-2 text-3xl font-semibold tabular-nums">{topPickBookPoints}pt</p>
+            <p class="mt-1 text-sm text-emerald-100/75">Flat 1pt win benchmark across every race</p>
           </div>
           <div>
-            <p class="text-xs uppercase tracking-[0.24em] text-emerald-200">Plan A</p>
-            <p class="mt-2 text-3xl font-semibold tabular-nums">{totalPlanPoints.toFixed(1)}pt</p>
-            <p class="mt-1 text-sm text-emerald-100/75">30-point book across the full festival</p>
+            <p class="text-xs uppercase tracking-[0.24em] text-emerald-200">Strong Value</p>
+            <p class="mt-2 text-3xl font-semibold tabular-nums">{totalStrongSelections}</p>
+            <p class="mt-1 text-sm text-emerald-100/75">Secondary overlay when price beats model</p>
           </div>
           <div>
             <p class="text-xs uppercase tracking-[0.24em] text-emerald-200">Progress</p>
@@ -136,8 +154,8 @@ function scoreClass(value: number | null): string {
             </h3>
             <p class="mt-1 text-sm text-emerald-100/85">
               {selectedSummary?.races ?? 0} races,
-              {" "}{selectedSummary?.strongSelections ?? 0} strong-value flags,
-              {" "}{(selectedSummary?.planPoints ?? 0).toFixed(1)}pt Plan A.
+              {" "}{selectedSummary?.races ?? 0}pt top-pick benchmark,
+              {" "}{(selectedSummary?.planPoints ?? 0).toFixed(1)}pt Plan A overlay.
             </p>
           </div>
           <span class="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100">
@@ -169,7 +187,16 @@ function scoreClass(value: number | null): string {
               {pct(topPickAccuracy)}
             </p>
             <p class="mt-1 text-sm text-emerald-100/75">
-              {settledRaceCount > 0 ? `${topPickWins}/${settledRaceCount} winning favourites` : "No settled races yet"}
+              {settledTopPickCount > 0 ? `${topPickWins}/${settledTopPickCount} winning top picks` : "No settled races yet"}
+            </p>
+          </div>
+          <div>
+            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Top-Pick Win P&amp;L</p>
+            <p class="mt-2 text-2xl font-semibold tabular-nums">
+              {pts(settledTopPickCount > 0 ? totalTopPickPl : null)}
+            </p>
+            <p class="mt-1 text-sm text-emerald-100/75">
+              {settledTopPickCount > 0 ? `${pct(topPickRoi)} ROI` : "Returns open once the first race finishes"}
             </p>
           </div>
           <div>
@@ -182,7 +209,7 @@ function scoreClass(value: number | null): string {
             </p>
           </div>
           <div>
-            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Win P&amp;L</p>
+            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Value Win P&amp;L</p>
             <p class={`mt-2 text-2xl font-semibold tabular-nums ${scoreClass(settledBets > 0 ? totalWinPl : null)}`}>
               {pts(settledBets > 0 ? totalWinPl : null)}
             </p>
@@ -192,13 +219,22 @@ function scoreClass(value: number | null): string {
             </p>
           </div>
           <div>
-            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Each-Way P&amp;L</p>
+            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Value E/W P&amp;L</p>
             <p class={`mt-2 text-2xl font-semibold tabular-nums ${scoreClass(settledBets > 0 ? totalEwPl : null)}`}>
               {pts(settledBets > 0 ? totalEwPl : null)}
             </p>
             <p class="mt-1 text-sm text-emerald-100/75">
               {pct(roi(totalEwPl, settledBets))}
               {settledBets > 0 ? " ROI" : ""}
+            </p>
+          </div>
+          <div>
+            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Plan A Book</p>
+            <p class="mt-2 text-2xl font-semibold tabular-nums">
+              {totalPlanPoints.toFixed(1)}pt
+            </p>
+            <p class="mt-1 text-sm text-emerald-100/75">
+              Curated staking overlay alongside the top-pick benchmark
             </p>
           </div>
         </div>
@@ -234,17 +270,21 @@ function scoreClass(value: number | null): string {
 
           <div class="mt-4 grid gap-2 text-sm text-emerald-50/90">
             <div class="flex items-center justify-between gap-3">
-              <span>Plan A</span>
-              <span class="font-semibold tabular-nums">{day.planPoints.toFixed(1)}pt</span>
+              <span>Top-1</span>
+              <span class={`font-semibold tabular-nums ${scoreClass(day.settledTopPickRaces > 0 ? day.topPickPl : null)}`}>
+                {pts(day.settledTopPickRaces > 0 ? day.topPickPl : null)}
+              </span>
             </div>
             <div class="flex items-center justify-between gap-3">
-              <span>Strong value</span>
-              <span class="font-semibold tabular-nums">{day.strongSelections}</span>
+              <span>Top-1 Record</span>
+              <span class="font-semibold tabular-nums">
+                {day.settledTopPickRaces > 0 ? `${day.topPickWins}/${day.settledTopPickRaces}` : "Pending"}
+              </span>
             </div>
             <div class="flex items-center justify-between gap-3">
-              <span>Win P&amp;L</span>
-              <span class={`font-semibold tabular-nums ${scoreClass(day.bets > 0 ? day.winPl : null)}`}>
-                {pts(day.bets > 0 ? day.winPl : null)}
+              <span>Value E/W</span>
+              <span class={`font-semibold tabular-nums ${scoreClass(day.bets > 0 ? day.valueEwPl : null)}`}>
+                {pts(day.bets > 0 ? day.valueEwPl : null)}
               </span>
             </div>
           </div>
