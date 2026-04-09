@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import date, datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -69,6 +70,89 @@ def _summarise_predictions(predictions_path: Path) -> None:
     print(f"- courses: {', '.join(courses) if courses else '(none)'}")
 
 
+def _race_has_results(race: dict) -> bool:
+    return any(
+        runner.get("finish_position") not in (None, "")
+        for runner in race.get("runners", [])
+    )
+
+
+def _should_preserve_race(race: dict, now: datetime) -> bool:
+    if _race_has_results(race):
+        return True
+
+    date_str = str(race.get("date") or "").strip()[:10]
+    if not date_str:
+        return False
+
+    try:
+        race_date = date.fromisoformat(date_str)
+    except ValueError:
+        return False
+
+    if race_date < now.date():
+        return True
+    if race_date > now.date():
+        return False
+
+    off_time = str(race.get("off_time") or "").strip()[:5]
+    if len(off_time) != 5:
+        return False
+
+    try:
+        race_dt = datetime.fromisoformat(f"{date_str}T{off_time}:00")
+    except ValueError:
+        return False
+
+    return race_dt <= now.replace(tzinfo=None)
+
+
+def _freeze_started_races(predictions_path: Path, published_path: Path) -> None:
+    if not predictions_path.exists() or not published_path.exists():
+        return
+
+    with open(predictions_path) as f:
+        new_predictions = json.load(f)
+    with open(published_path) as f:
+        published_predictions = json.load(f)
+
+    if not isinstance(new_predictions, list) or not isinstance(published_predictions, list):
+        return
+
+    now = datetime.now()
+    preserved_by_race_id = {
+        str(race.get("race_id")): race
+        for race in published_predictions
+        if _should_preserve_race(race, now)
+    }
+    if not preserved_by_race_id:
+        return
+
+    merged: list[dict] = []
+    seen_race_ids: set[str] = set()
+
+    for race in new_predictions:
+        race_id = str(race.get("race_id"))
+        if race_id in preserved_by_race_id:
+            merged.append(preserved_by_race_id[race_id])
+            seen_race_ids.add(race_id)
+        else:
+            merged.append(race)
+            seen_race_ids.add(race_id)
+
+    for race_id, race in preserved_by_race_id.items():
+        if race_id not in seen_race_ids:
+            merged.append(race)
+
+    with open(predictions_path, "w") as f:
+        json.dump(merged, f, indent=2)
+
+    print(
+        f"\nPreserved {len(preserved_by_race_id)} started/settled race(s) from "
+        f"{published_path}"
+    )
+
+
 def _load_pipeline_config() -> dict:
     with open(PROJECT_ROOT / "configs" / "pipeline.yaml") as f:
         return yaml.safe_load(f)
@@ -97,7 +181,8 @@ def _result_years(config: dict) -> str | None:
 
 
 def _refresh_scoring_results(args: argparse.Namespace, env: dict[str, str]) -> bool:
-    from src.ingest.fetch_results import fetch_course
+    from src.ingest.fetch_results import fetch_course, fetch_course_dates
+    from src.ingest.racecard_health import get_requested_racecard_dates
 
     config = _load_pipeline_config()
     years = _result_years(config)
@@ -108,6 +193,14 @@ def _refresh_scoring_results(args: argparse.Namespace, env: dict[str, str]) -> b
     courses_cfg = config.get("courses", {})
     output_dir = PROJECT_ROOT / config["paths"]["raw_results"]
     requested_courses = _scoring_courses(args, env, config)
+    configured_dates = get_requested_racecard_dates(config)
+    eligible_dates = sorted(
+        {
+            date_str
+            for date_str in configured_dates
+            if str(date_str).strip() and str(date_str) <= date.today().isoformat()
+        }
+    )
     refreshed_any = False
 
     for requested_course in requested_courses:
@@ -138,6 +231,19 @@ def _refresh_scoring_results(args: argparse.Namespace, env: dict[str, str]) -> b
             output_dir=output_dir,
             refresh=True,
         )
+        if path is None and eligible_dates:
+            print(
+                "\nFalling back to date-based results refresh for "
+                f"{requested_course}: {', '.join(eligible_dates)}"
+            )
+            path = fetch_course_dates(
+                course_name=str(course_key),
+                course_id=int(course_id),
+                dates=eligible_dates,
+                race_type=str(race_type),
+                output_dir=output_dir,
+                refresh=True,
+            )
         if path is None:
             print(f"\nWarning: results refresh failed for {requested_course} {years}")
             continue
@@ -241,13 +347,15 @@ def _publish_once(
     _run([python_bin, "-m", "src.pipeline", "--step", "predict"], env)
 
     dst_json = PROJECT_ROOT / args.publish_path
+    predictions_json = PROJECT_ROOT / "data/model/predictions.json"
+    _freeze_started_races(predictions_json, dst_json)
     dst_json.parent.mkdir(parents=True, exist_ok=True)
     _run(
         [
             python_bin,
             "scripts/settle_predictions.py",
             "--input",
-            "data/model/predictions.json",
+            str(predictions_json.relative_to(PROJECT_ROOT)),
             "--output",
             args.publish_path,
         ],
