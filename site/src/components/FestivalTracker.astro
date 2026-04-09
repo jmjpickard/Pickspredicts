@@ -1,0 +1,255 @@
+---
+import { getRaceDays, raceHasResults, toNumber, type Race } from "../types";
+
+interface Props {
+  races: Race[];
+  activeDate?: string;
+}
+
+const { races, activeDate } = Astro.props;
+
+const days = getRaceDays(races);
+const selectedDate = days.some((day) => day.date === activeDate) ? activeDate : days[0]?.date;
+
+const totalRaces = races.length;
+const totalRunners = races.reduce((sum, race) => sum + race.runners.length, 0);
+const totalStrongSelections = races.reduce(
+  (sum, race) => sum + race.runners.filter((runner) => runner.verdict === "Strong value").length,
+  0,
+);
+const totalPlanPoints = races.reduce((sum, race) => sum + (toNumber(race.plan_a_points) ?? 0), 0);
+
+const settledRaces = races.filter((race) => raceHasResults(race));
+const settledRaceCount = settledRaces.length;
+const settledBets = races.reduce((sum, race) => sum + (toNumber(race.num_bets) ?? 0), 0);
+const totalWinPl = races.reduce((sum, race) => sum + (toNumber(race.race_win_pl) ?? 0), 0);
+const totalEwPl = races.reduce((sum, race) => sum + (toNumber(race.race_ew_pl) ?? 0), 0);
+
+const topPickWins = settledRaces.filter((race) => {
+  const ordered = [...race.runners].sort((a, b) => b.win_prob - a.win_prob);
+  const topPick = ordered[0];
+  return toNumber(topPick?.finish_position) === 1;
+}).length;
+
+const topPickAccuracy = settledRaceCount > 0
+  ? (topPickWins / settledRaceCount) * 100
+  : null;
+
+const daySummaries = days.map((day) => {
+  const dayRaces = races.filter((race) => race.date?.startsWith(day.date));
+  const daySettledRaces = dayRaces.filter((race) => raceHasResults(race));
+  const strongSelections = dayRaces.reduce(
+    (sum, race) => sum + race.runners.filter((runner) => runner.verdict === "Strong value").length,
+    0,
+  );
+  const planPoints = dayRaces.reduce((sum, race) => sum + (toNumber(race.plan_a_points) ?? 0), 0);
+  const winPl = dayRaces.reduce((sum, race) => sum + (toNumber(race.race_win_pl) ?? 0), 0);
+  const bets = dayRaces.reduce((sum, race) => sum + (toNumber(race.num_bets) ?? 0), 0);
+
+  return {
+    date: day.date,
+    label: day.label,
+    races: dayRaces.length,
+    settledRaces: daySettledRaces.length,
+    strongSelections,
+    planPoints,
+    winPl,
+    bets,
+  };
+});
+
+const selectedSummary = daySummaries.find((day) => day.date === selectedDate) ?? daySummaries[0];
+
+function pct(value: number | null): string {
+  if (value === null) return "Pending";
+  return `${value.toFixed(1)}%`;
+}
+
+function pts(value: number | null): string {
+  if (value === null) return "Pending";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}pts`;
+}
+
+function progress(done: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.max(0, Math.min(100, (done / total) * 100));
+}
+
+function roi(pl: number, bets: number): number | null {
+  if (bets <= 0) return null;
+  return (pl / bets) * 100;
+}
+
+function scoreClass(value: number | null): string {
+  if (value === null) return "text-emerald-100";
+  if (value > 0) return "text-emerald-200";
+  if (value < 0) return "text-rose-200";
+  return "text-emerald-50";
+}
+---
+
+<section class="mb-8 overflow-hidden rounded-[32px] bg-racing-green text-white shadow-[0_22px_80px_-32px_rgba(15,23,42,0.7)]">
+  <div class="bg-[radial-gradient(circle_at_top_right,rgba(250,248,240,0.16),transparent_38%),linear-gradient(135deg,#1a472a_0%,#102b19_100%)] px-6 py-7 sm:px-8 sm:py-8">
+    <div class="grid gap-8 lg:grid-cols-[1.3fr,0.9fr]">
+      <div>
+        <p class="text-[0.72rem] uppercase tracking-[0.32em] text-gold/80">
+          Aintree Grand National Festival
+        </p>
+        <h2 class="mt-3 max-w-2xl font-[Georgia,serif] text-4xl leading-tight sm:text-5xl">
+          Daily predictions with a running scorecard for the week.
+        </h2>
+        <p class="mt-4 max-w-xl text-sm leading-6 text-emerald-100/90">
+          Fresh picks go live each morning. As results settle, the same page rolls
+          them into the hit rate and P&amp;L so the whole meeting stays readable at a glance.
+        </p>
+
+        <div class="mt-6 grid gap-4 border-t border-white/10 pt-5 sm:grid-cols-2 xl:grid-cols-4">
+          <div>
+            <p class="text-xs uppercase tracking-[0.24em] text-emerald-200">Book</p>
+            <p class="mt-2 text-3xl font-semibold tabular-nums">{totalRaces}</p>
+            <p class="mt-1 text-sm text-emerald-100/75">{totalRunners} runners across three days</p>
+          </div>
+          <div>
+            <p class="text-xs uppercase tracking-[0.24em] text-emerald-200">Strong Value</p>
+            <p class="mt-2 text-3xl font-semibold tabular-nums">{totalStrongSelections}</p>
+            <p class="mt-1 text-sm text-emerald-100/75">Selections currently flagged as overlays</p>
+          </div>
+          <div>
+            <p class="text-xs uppercase tracking-[0.24em] text-emerald-200">Plan A</p>
+            <p class="mt-2 text-3xl font-semibold tabular-nums">{totalPlanPoints.toFixed(1)}pt</p>
+            <p class="mt-1 text-sm text-emerald-100/75">30-point book across the full festival</p>
+          </div>
+          <div>
+            <p class="text-xs uppercase tracking-[0.24em] text-emerald-200">Progress</p>
+            <p class="mt-2 text-3xl font-semibold tabular-nums">{settledRaceCount}/{totalRaces}</p>
+            <p class="mt-1 text-sm text-emerald-100/75">Races settled so far</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-[26px] border border-white/10 bg-white/8 p-5 backdrop-blur-sm">
+        <p class="text-[0.7rem] uppercase tracking-[0.28em] text-emerald-200">Selected Day</p>
+        <div class="mt-3 flex items-start justify-between gap-4">
+          <div>
+            <h3 class="font-[Georgia,serif] text-3xl leading-tight">
+              {selectedSummary?.label ?? "Festival"}
+            </h3>
+            <p class="mt-1 text-sm text-emerald-100/85">
+              {selectedSummary?.races ?? 0} races,
+              {" "}{selectedSummary?.strongSelections ?? 0} strong-value flags,
+              {" "}{(selectedSummary?.planPoints ?? 0).toFixed(1)}pt Plan A.
+            </p>
+          </div>
+          <span class="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100">
+            {selectedSummary
+              ? selectedSummary.settledRaces > 0
+                ? `${selectedSummary.settledRaces}/${selectedSummary.races} settled`
+                : "Awaiting off"
+              : "Pending"}
+          </span>
+        </div>
+
+        <div class="mt-5">
+          <div class="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-emerald-200">
+            <span>Festival settlement</span>
+            <span>{Math.round(progress(settledRaceCount, totalRaces))}%</span>
+          </div>
+          <div class="mt-2 h-2 rounded-full bg-white/10">
+            <div
+              class="h-2 rounded-full bg-gold transition-all"
+              style={`width:${progress(settledRaceCount, totalRaces)}%`}
+            />
+          </div>
+        </div>
+
+        <div class="mt-5 grid gap-4 sm:grid-cols-2">
+          <div>
+            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Top-Pick Accuracy</p>
+            <p class="mt-2 text-2xl font-semibold tabular-nums">
+              {pct(topPickAccuracy)}
+            </p>
+            <p class="mt-1 text-sm text-emerald-100/75">
+              {settledRaceCount > 0 ? `${topPickWins}/${settledRaceCount} winning favourites` : "No settled races yet"}
+            </p>
+          </div>
+          <div>
+            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Strong-Value Bets</p>
+            <p class="mt-2 text-2xl font-semibold tabular-nums">
+              {settledBets > 0 ? settledBets : "Pending"}
+            </p>
+            <p class="mt-1 text-sm text-emerald-100/75">
+              {settledBets > 0 ? "Selections with fully settled returns" : "Returns open once the first race finishes"}
+            </p>
+          </div>
+          <div>
+            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Win P&amp;L</p>
+            <p class={`mt-2 text-2xl font-semibold tabular-nums ${scoreClass(settledBets > 0 ? totalWinPl : null)}`}>
+              {pts(settledBets > 0 ? totalWinPl : null)}
+            </p>
+            <p class="mt-1 text-sm text-emerald-100/75">
+              {pct(roi(totalWinPl, settledBets))}
+              {settledBets > 0 ? " ROI" : ""}
+            </p>
+          </div>
+          <div>
+            <p class="text-xs uppercase tracking-[0.18em] text-emerald-200">Each-Way P&amp;L</p>
+            <p class={`mt-2 text-2xl font-semibold tabular-nums ${scoreClass(settledBets > 0 ? totalEwPl : null)}`}>
+              {pts(settledBets > 0 ? totalEwPl : null)}
+            </p>
+            <p class="mt-1 text-sm text-emerald-100/75">
+              {pct(roi(totalEwPl, settledBets))}
+              {settledBets > 0 ? " ROI" : ""}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-7 grid gap-3 border-t border-white/10 pt-6 md:grid-cols-3">
+      {daySummaries.map((day) => (
+        <article
+          class:list={[
+            "rounded-[24px] border p-4 transition-colors",
+            day.date === selectedDate
+              ? "border-gold/60 bg-white/12"
+              : "border-white/10 bg-black/10",
+          ]}
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-sm font-semibold text-white">{day.label}</p>
+              <p class="mt-1 text-xs text-emerald-100/75">{day.races} races on the card</p>
+            </div>
+            <span class="text-[0.68rem] uppercase tracking-[0.2em] text-emerald-200">
+              {day.settledRaces > 0 ? `${day.settledRaces}/${day.races}` : "Pending"}
+            </span>
+          </div>
+
+          <div class="mt-4 h-1.5 rounded-full bg-white/10">
+            <div
+              class="h-1.5 rounded-full bg-gold"
+              style={`width:${progress(day.settledRaces, day.races)}%`}
+            />
+          </div>
+
+          <div class="mt-4 grid gap-2 text-sm text-emerald-50/90">
+            <div class="flex items-center justify-between gap-3">
+              <span>Plan A</span>
+              <span class="font-semibold tabular-nums">{day.planPoints.toFixed(1)}pt</span>
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <span>Strong value</span>
+              <span class="font-semibold tabular-nums">{day.strongSelections}</span>
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <span>Win P&amp;L</span>
+              <span class={`font-semibold tabular-nums ${scoreClass(day.bets > 0 ? day.winPl : null)}`}>
+                {pts(day.bets > 0 ? day.winPl : null)}
+              </span>
+            </div>
+          </div>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>

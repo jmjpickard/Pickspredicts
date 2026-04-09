@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "method": "temperature",
+  "selected": true,
+  "temperature": 0.94,
+  "log_loss_before": 0.2003894649973709,
+  "log_loss_after": 0.20023663605625652
+}

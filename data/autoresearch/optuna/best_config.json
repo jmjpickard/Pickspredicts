@@ -1,0 +1,53 @@
+{
+  "score": -0.061698213955232256,
+  "trial": 96,
+  "total_trials": 150,
+  "data_mode": "v3",
+  "baseline_score": -0.04963506442103474,
+  "pooled_log_loss": 0.20421385002622397,
+  "pooled_mrr": 0.5318241279629125,
+  "n_features": 67,
+  "config": {
+    "lgbm": {
+      "objective": "binary",
+      "metric": "binary_logloss",
+      "num_leaves": 64,
+      "learning_rate": 0.014070430656995437,
+      "feature_fraction": 0.5161830262743555,
+      "bagging_fraction": 0.7564512695663507,
+      "bagging_freq": 5,
+      "min_child_samples": 10,
+      "num_iterations": 2000,
+      "early_stopping_rounds": 50,
+      "lambda_l1": 0.0004622337427736833,
+      "lambda_l2": 2.2528337509638177,
+      "path_smooth": 3.145719382843511,
+      "verbose": -1,
+      "seed": 42
+    },
+    "feature_groups": {
+      "race_context": true,
+      "ratings": true,
+      "horse_form": true,
+      "connections": true,
+      "pedigree": false,
+      "market_proxy": true,
+      "runner_profile": true,
+      "market": false,
+      "comments": true,
+      "ratings_vs_field": false,
+      "enhanced": true,
+      "connections_extended": true,
+      "horse_context": false
+    },
+    "sample_weights": {
+      "enabled": false,
+      "strategy": "recency",
+      "recency": {
+        "half_life_days": 365,
+        "min_weight": 0.35,
+        "normalize": true
+      }
+    }
+  }
+}

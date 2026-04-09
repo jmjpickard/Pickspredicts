@@ -44,6 +44,7 @@ def fetch_course(
     years: str,
     race_type: str,
     output_dir: Path,
+    refresh: bool = False,
 ) -> Path | None:
     """Fetch results for a single course via rpscrape.
 
@@ -51,10 +52,12 @@ def fetch_course(
     """
     dest = output_dir / f"{course_name}_{years.replace('-', '_')}.csv"
 
-    if dest.exists():
+    if dest.exists() and not refresh:
         row_count = sum(1 for _ in open(dest)) - 1  # subtract header
         logger.info("Skipping %s — already cached (%d rows)", course_name, row_count)
         return dest
+    if dest.exists() and refresh:
+        logger.info("Refreshing %s cache at %s", course_name, dest)
 
     logger.info("Fetching %s (course %d) for %s...", course_name, course_id, years)
 

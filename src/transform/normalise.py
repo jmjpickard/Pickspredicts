@@ -399,6 +399,13 @@ def normalise() -> None:
 
     logger.info("Raw columns: %s", list(raw.columns))
 
+    # Drop rows with malformed dates (e.g. shifted CSV columns)
+    valid_date_mask = raw["date"].astype(str).str.match(r"^\d{4}-\d{2}-\d{2}")
+    n_bad = (~valid_date_mask).sum()
+    if n_bad > 0:
+        logger.warning("Dropping %d rows with invalid dates", n_bad)
+        raw = raw[valid_date_mask].copy()
+
     # Build canonical tables
     races = build_races_df(raw)
     runners = build_runners_df(raw)

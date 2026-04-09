@@ -20,21 +20,26 @@ const { title } = Astro.props;
     />
   </head>
   <body class="bg-racing-cream min-h-screen font-['Inter',sans-serif] text-gray-900">
-    <header class="bg-racing-green text-white">
-      <div class="mx-auto max-w-5xl px-4 py-5">
+    <header class="border-b border-white/10 bg-racing-green text-white">
+      <div class="mx-auto max-w-6xl px-4 py-5">
         <a href="/" class="block">
-          <h1 class="text-2xl font-bold tracking-tight">
+          <p class="text-[0.68rem] uppercase tracking-[0.28em] text-gold/80">
+            Racing Model
+          </p>
+          <h1 class="mt-1 text-2xl font-bold tracking-tight">
             Racing Value Finder
           </h1>
-          <p class="text-sm text-emerald-300 mt-0.5">Value Finder</p>
+          <p class="mt-0.5 text-sm text-emerald-200">
+            Aintree Festival Tracker • April 9-11, 2026
+          </p>
         </a>
       </div>
     </header>
-    <main class="mx-auto max-w-5xl px-4 py-6">
+    <main class="mx-auto max-w-6xl px-4 py-6">
       <slot />
     </main>
     <footer class="border-t border-gray-200 mt-12">
-      <div class="mx-auto max-w-5xl px-4 py-4 text-xs text-gray-400">
+      <div class="mx-auto max-w-6xl px-4 py-4 text-xs text-gray-400">
         Model predictions for entertainment only. Always gamble responsibly.
       </div>
     </footer>

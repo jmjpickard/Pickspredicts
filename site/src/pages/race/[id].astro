@@ -1,12 +1,11 @@
 ---
 import Layout from "../../layouts/Layout.astro";
 import RunnerTable from "../../components/RunnerTable.astro";
-import type { Race } from "../../types";
+import { getRaceDays, raceHasResults, toBoolean, toNumber, type Race } from "../../types";
 
 import predictions from "../../../public/predictions.json";
 
 const races = predictions as Race[];
-const hasResults = races.some((r) => r.runners.some((run) => run.finish_position != null));
 
 export function getStaticPaths() {
   const allRaces = predictions as Race[];
@@ -22,19 +21,27 @@ if (!race) {
   return Astro.redirect("/");
 }
 
+const days = getRaceDays(races);
+const raceDate = (race.date ?? "").slice(0, 10);
+const isFirstDay = days[0]?.date === raceDate;
+const backLabel = days.find((day) => day.date === raceDate)?.label ?? "All races";
+const backHref = !raceDate || isFirstDay ? "/" : `/day/${raceDate}`;
+
 const time = race.off_time ?? "";
 const name = race.race_name ?? `Race ${race.race_id}`;
 const course = race.course ?? "";
 const type = race.race_type ?? "";
 const cls = race.race_class ? `${race.race_class}` : "";
-const dist = race.distance_f ? `${race.distance_f}f` : "";
+const distance = toNumber(race.distance_f);
+const dist = distance !== null ? `${distance}f` : "";
 const badges = [course, type, cls, dist].filter(Boolean);
-const handicapBadge = race.is_handicap === true;
+const handicapBadge = toBoolean(race.is_handicap);
 const patternBadge = race.pattern && race.pattern !== "None" && race.pattern !== "";
 
-const bets = race.runners.filter((r) => r.is_bet);
-const winPl = race.race_win_pl ?? 0;
-const ewPl = race.race_ew_pl ?? 0;
+const showResults = raceHasResults(race);
+const bets = race.runners.filter((r) => toBoolean(r.is_bet));
+const winPl = toNumber(race.race_win_pl) ?? 0;
+const ewPl = toNumber(race.race_ew_pl) ?? 0;
 
 function plStr(v: number): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;
@@ -47,9 +54,9 @@ function plColor(v: number): string {
 }
 ---
 
-<Layout title={`${name} — Racing Value Finder`}>
-  <a href="/" class="inline-flex items-center text-sm text-gray-500 hover:text-racing-green mb-4">
-    &larr; All races
+<Layout title={`${name} — Aintree Festival Tracker`}>
+  <a href={backHref} class="mb-4 inline-flex items-center text-sm text-gray-500 hover:text-racing-green">
+    &larr; {backLabel}
   </a>
 
   <div class="mb-6">
@@ -78,7 +85,7 @@ function plColor(v: number): string {
       <span class="inline-block rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
         {race.runners.length} runners
       </span>
-      {race.num_places_paid && (
+      {toNumber(race.num_places_paid) && (
         <span class="inline-block rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
           {race.num_places_paid} places @ {race.place_fraction}
         </span>
@@ -86,7 +93,7 @@ function plColor(v: number): string {
     </div>
   </div>
 
-  {hasResults && bets.length > 0 && (
+  {showResults && bets.length > 0 && (
     <div class="rounded-lg border border-gray-200 bg-white p-4 mb-4">
       <div class="flex items-center justify-between">
         <p class="text-sm text-gray-600">
@@ -111,6 +118,6 @@ function plColor(v: number): string {
   )}
 
   <div class="bg-white rounded-lg border border-gray-200 p-4">
-    <RunnerTable runners={race.runners} showResults={hasResults} />
+    <RunnerTable runners={race.runners} showResults={showResults} />
   </div>
 </Layout>

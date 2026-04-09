@@ -1,0 +1,27 @@
+[
+  {
+    "window": "cheltenham_2025",
+    "course": "Cheltenham",
+    "train_rows": 20313,
+    "val_rows": 452,
+    "val_races": 28,
+    "best_iteration": 177,
+    "log_loss": 0.19273697041343069,
+    "mrr": 0.500884879009879,
+    "top1_accuracy": 0.32142857142857145,
+    "top1_roi": 0.13714285714285715,
+    "top1_pnl": 3.84,
+    "top1_roi_ci_low": -0.5178571428571429,
+    "top1_roi_ci_high": 0.9107142857142857,
+    "fav_top1_accuracy": 0.32142857142857145,
+    "fav_roi": 0.13714285714285715,
+    "fav_pnl": 3.84,
+    "strong_bets": 10,
+    "strong_win_roi": 1.1,
+    "strong_win_pnl": 11.0,
+    "strong_win_roi_ci_low": -0.4,
+    "strong_win_roi_ci_high": 2.85,
+    "strong_ew_roi": 0.8324999999999999,
+    "strong_ew_pnl": 8.325
+  }
+]

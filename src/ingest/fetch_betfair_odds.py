@@ -20,6 +20,7 @@ from difflib import SequenceMatcher
 import json
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -35,6 +36,12 @@ _ = load_dotenv(PROJECT_ROOT / ".env")
 CERT_LOGIN_URL = "https://identitysso-cert.betfair.com/api/certlogin"
 API_BASE = "https://api.betfair.com/exchange/betting/rest/v1.0"
 MARKET_BOOK_BATCH_SIZE = 5
+REGION_TIMEZONES = {
+    "gb": "Europe/London",
+    "uk": "Europe/London",
+    "ire": "Europe/Dublin",
+    "ie": "Europe/Dublin",
+}
 
 # Betfair event type ID for horse racing
 HORSE_RACING_EVENT_TYPE = "7"
@@ -191,6 +198,45 @@ def _same_course(a: str, b: str) -> bool:
     a_norm = re.sub(r"\s*\(.*?\)\s*", " ", a).strip().lower()
     b_norm = re.sub(r"\s*\(.*?\)\s*", " ", b).strip().lower()
     return a_norm == b_norm or a_norm in b_norm or b_norm in a_norm
+
+
+def _course_region(config: dict[str, Any], course_name: str) -> str | None:
+    regions = config.get("betfair", {}).get("regions", {})
+    if isinstance(regions, dict):
+        for configured_course, region in regions.items():
+            if _same_course(str(configured_course), course_name):
+                region_code = str(region).strip().lower()
+                return region_code or None
+
+    racecard_region = config.get("racecards", {}).get("region")
+    if racecard_region is None:
+        return None
+
+    tokens = str(racecard_region).strip().lower().replace(",", " ").split()
+    return tokens[0] if tokens else None
+
+
+def _parse_market_start_local(
+    market_start: object,
+    region_code: str | None,
+) -> tuple[str, str]:
+    raw = str(market_start).strip()
+    if not raw:
+        return "", ""
+
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return "", ""
+
+    timezone_name = REGION_TIMEZONES.get(str(region_code or "").strip().lower())
+    if timezone_name:
+        try:
+            dt = dt.astimezone(ZoneInfo(timezone_name))
+        except Exception:
+            logger.debug("Failed to localise market start %s via %s", raw, timezone_name)
+
+    return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M")
 
 
 def _market_type_code(market: dict[str, Any]) -> str:
@@ -594,6 +640,7 @@ def fetch_cheltenham_odds() -> None:
     for course in scoring_courses:
         found = client.find_markets(course)
         preferred_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        course_region = _course_region(config, course)
         for market in found:
             venue = str(market.get("event", {}).get("venue", ""))
             event_name = str(market.get("event", {}).get("name", ""))
@@ -619,15 +666,18 @@ def fetch_cheltenham_odds() -> None:
                 str(market.get("marketName", "")),
                 market_start,
             )
+            market_with_context = dict(market)
+            market_with_context["_resolved_course"] = course
+            market_with_context["_course_region"] = course_region
             existing = preferred_by_key.get(key)
             if existing is None:
-                preferred_by_key[key] = market
+                preferred_by_key[key] = market_with_context
                 continue
 
             existing_rank = _market_type_rank(_market_type_code(existing))
             candidate_rank = _market_type_rank(_market_type_code(market))
             if candidate_rank < existing_rank:
-                preferred_by_key[key] = market
+                preferred_by_key[key] = market_with_context
 
         filtered: list[dict[str, Any]] = []
         for market in preferred_by_key.values():
@@ -672,15 +722,17 @@ def fetch_cheltenham_odds() -> None:
             turn_in_play = bool(description.get("turnInPlayEnabled", False))
 
             # Parse start time for date/off_time
-            date_str = ""
-            off_time = ""
-            if market_start:
-                try:
-                    dt = datetime.fromisoformat(market_start.replace("Z", "+00:00"))
-                    date_str = dt.strftime("%Y-%m-%d")
-                    off_time = dt.strftime("%H:%M")
-                except ValueError:
-                    pass
+            resolved_course = str(
+                catalogue.get("_resolved_course")
+                or event.get("venue")
+                or "Cheltenham"
+            )
+            course_region = str(
+                catalogue.get("_course_region")
+                or _course_region(config, resolved_course)
+                or ""
+            )
+            date_str, off_time = _parse_market_start_local(market_start, course_region)
 
             # Build runner name lookup from catalogue
             runner_names: dict[int, str] = {}
@@ -716,7 +768,7 @@ def fetch_cheltenham_odds() -> None:
                 rows.append({
                     "race_id": market_id,
                     "date": date_str,
-                    "course": event.get("venue", "Cheltenham"),
+                    "course": resolved_course,
                     "off_time": off_time,
                     "market_name": catalogue.get("marketName", ""),
                     "horse_id": sel_id,

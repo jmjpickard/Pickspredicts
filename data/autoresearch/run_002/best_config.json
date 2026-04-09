@@ -1,0 +1,33 @@
+{
+  "score": -0.05850698705935006,
+  "iteration": 7,
+  "pooled_log_loss": 0.2036259389872664,
+  "pooled_mrr": 0.524265852093233,
+  "n_features": 62,
+  "config": {
+    "lgbm": {
+      "objective": "binary",
+      "metric": "binary_logloss",
+      "num_leaves": 31,
+      "learning_rate": 0.0129050935062249,
+      "feature_fraction": 0.8,
+      "bagging_fraction": 0.8,
+      "bagging_freq": 5,
+      "min_child_samples": 20,
+      "num_iterations": 2000,
+      "early_stopping_rounds": 50,
+      "verbose": -1,
+      "seed": 42
+    },
+    "feature_groups": {
+      "race_context": true,
+      "ratings": true,
+      "horse_form": true,
+      "connections": true,
+      "pedigree": true,
+      "runner_profile": true,
+      "market": true,
+      "comments": false
+    }
+  }
+}

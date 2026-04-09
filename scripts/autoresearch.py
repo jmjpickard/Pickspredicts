@@ -1,6 +1,8 @@
-"""Autoresearch loop — Karpathy-style iterative model improvement.
+"""Autoresearch loop — agent-in-the-loop iterative model improvement.
 
-Mutate one thing, backtest on fixed festival windows, keep if better, repeat.
+An LLM agent analyses results, reasons about what to try, and proposes
+config changes. Each proposal is evaluated on fixed festival windows.
+Improvements are kept and fed back to the agent for the next iteration.
 
 Primary metric : pooled log loss across all windows (lower = better)
 Secondary metric: pooled MRR — mean reciprocal rank of the winner (higher = better)
@@ -8,16 +10,15 @@ Secondary metric: pooled MRR — mean reciprocal rank of the winner (higher = be
 The "score" used to decide keep/discard is:
     score = pooled_log_loss - 0.5 * pooled_mrr   (lower = better)
 
-This rewards both probability calibration AND ranking the winner highly.
-
 Usage:
-    .venv/bin/python scripts/autoresearch.py
-    .venv/bin/python scripts/autoresearch.py --iterations 200 --seed 7
-    .venv/bin/python scripts/autoresearch.py --windows cheltenham_2023 cheltenham_2024 cheltenham_2025
-    .venv/bin/python scripts/autoresearch.py --iterations 50 --out data/autoresearch/run_test
+    .venv/bin/python scripts/autoresearch.py --iterations 10
+    .venv/bin/python scripts/autoresearch.py --iterations 50 --model anthropic/claude-sonnet-4-20250514
+    .venv/bin/python scripts/autoresearch.py --iterations 20 --apply
+    .venv/bin/python scripts/autoresearch.py --provider random --iterations 100
 
 Each iteration appends one line to <out>/results.jsonl.
 Best config is always written to <out>/best_config.json.
+When --apply is set, best config is written back to configs/pipeline.yaml.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import copy
 import json
 import logging
 import math
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -36,7 +38,19 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import yaml
+from dotenv import load_dotenv
+from openai import OpenAI
 from sklearn.metrics import log_loss
+
+from src.model.feature_groups import (
+    FEATURE_GROUPS,
+    REQUIRED_FEATURE_GROUPS,
+    active_feature_cols,
+    default_feature_group_flags,
+)
+from src.model.sample_weights import build_sample_weights
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,51 +72,6 @@ FESTIVAL_WINDOWS: dict[str, tuple[str, str, str]] = {
 META_COLS = {"race_id", "horse_id", "date", "course", "horse_name", "finish_position", "won", "placed"}
 
 # ---------------------------------------------------------------------------
-# Feature groups — used for group-level masking experiments
-# ---------------------------------------------------------------------------
-
-FEATURE_GROUPS: dict[str, list[str]] = {
-    "race_context": [
-        "field_size", "is_handicap", "race_type_encoded", "race_class_num",
-        "is_grade1", "is_grade2", "is_grade3", "track_direction_encoded",
-        "distance_band", "going_bucket",
-    ],
-    "ratings": [
-        "or_current", "rpr_current", "ts_current",
-        "or_best_last3", "or_best_last5", "rpr_best_last3", "rpr_best_last5",
-        "or_rpr_diff", "or_trend_last5",
-    ],
-    "horse_form": [
-        "age_at_race", "days_since_last_run", "career_runs", "career_wins", "career_places",
-        "chase_starts", "hurdle_starts", "dnf_rate_last5", "avg_btn_last3", "btn_trend_last5",
-        "headgear_changed", "first_time_headgear", "win_rate_overall", "place_rate_overall",
-        "runs_last_90d", "runs_last_365d", "win_rate_going_bucket", "win_rate_dist_band",
-        "win_rate_course", "win_rate_track_direction", "place_rate_track_direction",
-    ],
-    "connections": [
-        "trainer_winpct_14d", "trainer_winpct_30d", "trainer_winpct_90d",
-        "jockey_winpct_14d", "jockey_winpct_30d", "jockey_winpct_90d",
-        "trainer_festival_winpct", "jockey_festival_winpct", "combo_winpct",
-    ],
-    "pedigree": [
-        "sire_cheltenham_winpct", "sire_going_winpct", "sire_dist_winpct",
-    ],
-    "runner_profile": [
-        "sp_rank", "weight_carried", "weight_vs_field_avg",
-        "course_dist_winner", "days_since_last_win", "class_change",
-    ],
-    "market": [
-        "market_implied_prob", "market_rank", "pre_price_move", "market_confidence",
-    ],
-    "comments": [
-        "dominant_style_code", "pct_trouble", "pct_jumping_issues",
-    ],
-}
-
-# Groups that are always kept (removing them collapses the model entirely)
-REQUIRED_GROUPS = {"race_context"}
-
-# ---------------------------------------------------------------------------
 # Default config — mirrors pipeline.yaml baseline
 # ---------------------------------------------------------------------------
 
@@ -119,33 +88,58 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "min_child_samples": 20,
         "num_iterations": 2000,
         "early_stopping_rounds": 50,
+        "lambda_l1": 0.0,
+        "lambda_l2": 0.0,
+        "path_smooth": 0.0,
         "verbose": -1,
         "seed": 42,
     },
     # Feature groups to include (all on by default)
-    "feature_groups": {g: True for g in FEATURE_GROUPS},
+    "feature_groups": default_feature_group_flags(),
+    "sample_weights": {
+        "enabled": False,
+        "strategy": "recency",
+        "recency": {
+            "half_life_days": 365,
+            "min_weight": 0.35,
+            "normalize": True,
+        },
+    },
 }
 
+TUNEABLE_LGBM_KEYS = (
+    "num_leaves",
+    "learning_rate",
+    "feature_fraction",
+    "bagging_fraction",
+    "min_child_samples",
+    "lambda_l1",
+    "lambda_l2",
+    "path_smooth",
+)
+
 # ---------------------------------------------------------------------------
-# Mutation space
+# Search space definition (shared with agent prompt)
 # ---------------------------------------------------------------------------
 
-# Each entry: param_path (dot-separated key into config), type, and range/options
-# Types: "int", "log_float", "float", "bool", "choice"
-MUTATIONS: list[dict[str, Any]] = [
-    # LightGBM hyperparams
+SEARCH_SPACE: list[dict[str, Any]] = [
     {"path": "lgbm.num_leaves",        "type": "int",       "low": 16,   "high": 96},
     {"path": "lgbm.learning_rate",     "type": "log_float", "low": 0.01, "high": 0.15},
     {"path": "lgbm.feature_fraction",  "type": "float",     "low": 0.5,  "high": 1.0},
     {"path": "lgbm.bagging_fraction",  "type": "float",     "low": 0.5,  "high": 1.0},
     {"path": "lgbm.min_child_samples", "type": "int",       "low": 5,    "high": 50},
-    # Feature group toggles (excluding required groups)
+    {"path": "lgbm.lambda_l1",        "type": "log_float", "low": 0.001, "high": 5.0},
+    {"path": "lgbm.lambda_l2",        "type": "log_float", "low": 0.001, "high": 5.0},
+    {"path": "lgbm.path_smooth",      "type": "float",     "low": 0.0,  "high": 10.0},
     *[
         {"path": f"feature_groups.{g}", "type": "bool"}
         for g in FEATURE_GROUPS
-        if g not in REQUIRED_GROUPS
+        if g not in REQUIRED_FEATURE_GROUPS
     ],
 ]
+
+# Legacy alias for random fallback
+MUTATIONS = SEARCH_SPACE
 
 
 # ---------------------------------------------------------------------------
@@ -168,13 +162,25 @@ def _set(cfg: dict[str, Any], path: str, value: Any) -> None:
     node[keys[-1]] = value
 
 
-def _active_feature_cols(all_feature_cols: list[str], cfg: dict[str, Any]) -> list[str]:
-    """Return feature columns that are active under the current config."""
-    disabled: set[str] = set()
-    for group_name, cols in FEATURE_GROUPS.items():
-        if not cfg["feature_groups"].get(group_name, True):
-            disabled.update(cols)
-    return [c for c in all_feature_cols if c not in disabled]
+def pipeline_baseline_config(pipeline_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Seed the search from the active pipeline config instead of the hardcoded default."""
+    baseline_cfg = copy.deepcopy(DEFAULT_CONFIG)
+
+    model_cfg = pipeline_cfg.get("model", {})
+    lgbm_cfg = model_cfg.get("lgbm", {})
+    for key in TUNEABLE_LGBM_KEYS:
+        if key in lgbm_cfg:
+            baseline_cfg["lgbm"][key] = lgbm_cfg[key]
+
+    pipeline_groups = model_cfg.get("feature_groups", {})
+    for group_name in baseline_cfg["feature_groups"]:
+        if group_name in pipeline_groups:
+            baseline_cfg["feature_groups"][group_name] = bool(pipeline_groups[group_name])
+
+    if "sample_weights" in model_cfg:
+        baseline_cfg["sample_weights"] = copy.deepcopy(model_cfg["sample_weights"])
+
+    return baseline_cfg
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +209,7 @@ def _eval_window(
     runners: pd.DataFrame,
     feature_cols: list[str],
     lgbm_params: dict[str, Any],
+    sample_weights_cfg: dict[str, Any] | None,
 ) -> dict[str, float]:
     """Train + evaluate one festival window. Returns log_loss and mrr."""
     course, start, end = FESTIVAL_WINDOWS[window_name]
@@ -236,7 +243,12 @@ def _eval_window(
     train_params = {k: v for k, v in lgbm_params.items() if k != "early_stopping_rounds"}
     early_stop = lgbm_params.get("early_stopping_rounds", 50)
 
-    train_ds = lgb.Dataset(train_df[active_cols], label=train_df["won"])
+    train_weights = build_sample_weights(train_df, val_start, sample_weights_cfg)
+    train_ds = lgb.Dataset(
+        train_df[active_cols],
+        label=train_df["won"],
+        weight=train_weights.to_numpy(dtype=np.float64) if train_weights is not None else None,
+    )
     val_ds = lgb.Dataset(val_df[active_cols], label=val_df["won"], reference=train_ds)
 
     booster = lgb.train(
@@ -268,13 +280,20 @@ def evaluate_config(
     windows: list[str],
 ) -> dict[str, Any]:
     """Evaluate config across all windows. Returns pooled metrics."""
-    feature_cols = _active_feature_cols(all_feature_cols, cfg)
+    feature_cols = active_feature_cols(all_feature_cols, cfg["feature_groups"])
     if len(feature_cols) == 0:
         return {"score": float("inf"), "pooled_log_loss": float("inf"), "pooled_mrr": 0.0, "windows": {}}
 
     window_results: dict[str, dict[str, float]] = {}
     for w in windows:
-        window_results[w] = _eval_window(w, features, runners, feature_cols, cfg["lgbm"])
+        window_results[w] = _eval_window(
+            w,
+            features,
+            runners,
+            feature_cols,
+            cfg["lgbm"],
+            cfg.get("sample_weights"),
+        )
 
     valid = [r for r in window_results.values() if r["val_races"] > 0]
     if not valid:
@@ -295,7 +314,7 @@ def evaluate_config(
 
 
 # ---------------------------------------------------------------------------
-# Mutation sampler
+# Random mutation fallback (--provider random)
 # ---------------------------------------------------------------------------
 
 def sample_mutation(cfg: dict[str, Any], rng: np.random.Generator) -> tuple[dict[str, Any], str]:
@@ -327,6 +346,316 @@ def sample_mutation(cfg: dict[str, Any], rng: np.random.Generator) -> tuple[dict
 
 
 # ---------------------------------------------------------------------------
+# Agent-in-the-loop: LLM proposes mutations
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT = """\
+You are an expert ML researcher optimising a LightGBM model that predicts \
+horse racing winners at UK/Irish National Hunt festivals (Cheltenham, Aintree).
+
+## Objective
+Minimise the composite score:  score = pooled_log_loss - 0.5 * pooled_mrr  (lower = better)
+- log_loss measures probability calibration (lower = better)
+- MRR (mean reciprocal rank) measures how highly the winner is ranked (higher = better)
+
+The model is evaluated via walk-forward backtests on 6 festival windows \
+(3 Cheltenham + 3 Aintree festivals, 2023-2025). Each window trains on all \
+data before the festival start date, then evaluates on that festival's races. \
+Validation sets are small: ~300-450 runners across 20-28 races per window.
+
+## Domain knowledge — horse racing prediction
+
+### What the literature says works
+- Market odds (Betfair SP) are the single strongest predictor (r>0.90 with actual \
+win frequency). The model should complement the market, not replicate it.
+- Official ratings (OR, RPR, Topspeed) are the strongest fundamental features.
+- Going preference, distance suitability, and course form are Tier 1 features for NH racing.
+- Trainer/jockey festival-specific strike rates carry genuine signal (Mullins, Henderson, Elliott).
+- Pedigree features help most for lightly-raced novices; less useful for established form horses.
+- Comment-derived NLP features have previously DEGRADED model performance in this system.
+- The market features group can cause the model to "parrot" market prices, diluting its \
+ability to find genuine value overlays. Watch whether toggling market off improves ROI-relevant metrics.
+
+### What typically doesn't work
+- Very complex trees on small datasets — overfitting is the primary risk
+- Removing runner_profile or horse_form groups — these consistently hurt badly
+- Individual feature-level removal is too noisy at this sample size; group-level toggles are appropriate
+
+## Search space
+You may change ONE parameter per iteration. Here are the tuneable parameters:
+
+### LightGBM hyperparameters
+- lgbm.num_leaves: int [16, 96] — tree complexity. Default: 31. Sweet spot: 16-40. \
+Values >48 almost certainly overfit on our data size.
+- lgbm.learning_rate: float [0.01, 0.15] (log-scale) — step size. Default: 0.05. \
+Sweet spot: 0.02-0.05. Below 0.015, early stopping fires too early. \
+Lower LR + more trees = better generalisation. LR and num_leaves interact: \
+lower LR pairs well with slightly fewer leaves.
+- lgbm.feature_fraction: float [0.5, 1.0] — column subsampling per tree. Default: 0.8. \
+Recommended: 0.6-0.8. With correlated rating features (or/rpr/ts), lower values \
+force tree diversity. Below 0.5 risks excluding critical features too often.
+- lgbm.bagging_fraction: float [0.5, 1.0] — row subsampling per tree. Default: 0.8. \
+Recommended: 0.7-0.85. Must be paired with bagging_freq > 0 (we use 5).
+- lgbm.min_child_samples: int [5, 50] — min samples per leaf. Default: 20. \
+With ~8% positive rate, leaves need 12-15+ samples for stable estimates. \
+Range 15-35 is safest. Values <10 risk noisy leaves; >40 may be too coarse.
+- lgbm.lambda_l1: float [0.001, 5.0] (log-scale) — L1 regularization on leaf weights. \
+Default: 0. Adds sparsity. Start around 0.01-0.1, rarely helps above 1.0.
+- lgbm.lambda_l2: float [0.001, 5.0] (log-scale) — L2 regularization on leaf weights. \
+Default: 0. Smooths predictions. More commonly useful than L1. Try 0.01-1.0.
+- lgbm.path_smooth: float [0, 10] — smoothing applied to tree predictions. \
+Default: 0. Values 1-5 can help on small datasets by shrinking leaf outputs. \
+Higher values = more conservative predictions.
+
+### Feature group toggles (true=included, false=excluded)
+- feature_groups.ratings: {ratings_cols} — official/performance ratings (Tier 1, usually keep)
+- feature_groups.horse_form: {horse_form_cols} — form, win rates, history (Tier 1, usually keep)
+- feature_groups.connections: {connections_cols} — trainer/jockey stats (Tier 2, usually additive)
+- feature_groups.pedigree: {pedigree_cols} — sire performance (Tier 3, may be too sparse)
+- feature_groups.market_proxy: {market_proxy_cols} — coarse market ordering only (useful but operationally simpler than full market features)
+- feature_groups.runner_profile: {runner_profile_cols} — weight, class, course-distance profile (Tier 1-2, usually keep)
+- feature_groups.market: {market_cols} — Betfair market data (powerful but may cause market-parroting)
+- feature_groups.comments: {comments_cols} — NLP-derived comment features (previously degraded model)
+- feature_groups.ratings_vs_field: {ratings_vs_field_cols} — within-race relative ratings (NEW — high signal expected)
+- feature_groups.enhanced: {enhanced_cols} — sex, festival exp, class context (NEW — domain-driven)
+- feature_groups.connections_extended: {connections_extended_cols} — trainer/jockey by class, course, race type (NEW — granular connection stats)
+- feature_groups.horse_context: {horse_context_cols} — first-time flags, field quality, OR movement (NEW — situational context)
+
+Note: "race_context" is always required and cannot be toggled off.
+
+## Search strategy guidance
+
+### Phase-based approach
+- Iterations 0-10: Explore extremes of each continuous parameter. Test each feature toggle once.
+- Iterations 10-30: Focus on parameters that showed sensitivity. Fine-tune promising regions.
+- Iterations 30+: Small adjustments, interaction effects (e.g., LR + num_leaves together).
+
+### Rules
+- NEVER propose the exact same change that was previously rejected.
+- Score improvements < 0.005 are likely noise with our validation sizes. Be sceptical of tiny gains.
+- If a change improves some windows but hurts others, it may be overfitting.
+- When scores are similar, prefer MORE regularisation (lower num_leaves, higher min_child_samples).
+- If the last 5+ iterations were all rejected, try a larger/different type of change.
+- Track patterns: if lowering LR keeps helping, keep going. If removing features keeps hurting, stop trying.
+- early_stopping_rounds (50) * learning_rate should be ~1.0-2.0 for adequate convergence.
+
+## Your task
+Given the current best config and the history of all previous attempts, propose \
+exactly ONE change. Think carefully about what the history tells you.
+
+## Response format
+Respond with valid JSON only, no markdown fencing. The JSON must have exactly these keys:
+{{
+  "reasoning": "Brief explanation of why you're proposing this change",
+  "path": "the.param.path",
+  "value": <the new value>
+}}
+"""
+
+
+def _format_system_prompt() -> str:
+    """Fill in feature column names for the system prompt."""
+    return SYSTEM_PROMPT.format(
+        ratings_cols=", ".join(FEATURE_GROUPS["ratings"]),
+        horse_form_cols=", ".join(FEATURE_GROUPS["horse_form"][:5]) + ", ...",
+        connections_cols=", ".join(FEATURE_GROUPS["connections"][:3]) + ", ...",
+        pedigree_cols=", ".join(FEATURE_GROUPS["pedigree"]),
+        market_proxy_cols=", ".join(FEATURE_GROUPS["market_proxy"]),
+        runner_profile_cols=", ".join(FEATURE_GROUPS["runner_profile"]),
+        market_cols=", ".join(FEATURE_GROUPS["market"]),
+        comments_cols=", ".join(FEATURE_GROUPS["comments"]),
+        ratings_vs_field_cols=", ".join(FEATURE_GROUPS["ratings_vs_field"]),
+        enhanced_cols=", ".join(FEATURE_GROUPS["enhanced"]),
+        connections_extended_cols=", ".join(FEATURE_GROUPS["connections_extended"]),
+        horse_context_cols=", ".join(FEATURE_GROUPS["horse_context"]),
+    )
+
+
+def _format_history(history: list[dict[str, Any]], best_score: float) -> str:
+    """Format trial history for the agent's user message."""
+    if not history:
+        return "No previous iterations yet. This is the first proposal."
+
+    lines: list[str] = []
+    for h in history:
+        status = "ACCEPTED" if h["accepted"] else "rejected"
+        lines.append(
+            f"  iter {h['iteration']}: {h['mutation']} → "
+            f"score={h['score']:.4f} ll={h['pooled_log_loss']:.4f} "
+            f"mrr={h['pooled_mrr']:.4f} feats={h['n_features']} [{status}]"
+        )
+
+    accepted_count = sum(1 for h in history if h["accepted"])
+    return (
+        f"Trial history ({len(history)} iterations, {accepted_count} accepted):\n"
+        + "\n".join(lines)
+        + f"\n\nCurrent best score: {best_score:.4f}"
+    )
+
+
+def _build_user_message(
+    current_cfg: dict[str, Any],
+    best_score: float,
+    history: list[dict[str, Any]],
+) -> str:
+    """Build the user message with current config + history."""
+    # Show only the tuneable parts of the config
+    tuneable_cfg = {
+        "lgbm": {
+            k: v for k, v in current_cfg["lgbm"].items()
+            if k in {"num_leaves", "learning_rate", "feature_fraction", "bagging_fraction", "min_child_samples", "lambda_l1", "lambda_l2", "path_smooth"}
+        },
+        "feature_groups": current_cfg["feature_groups"],
+        "sample_weights": current_cfg.get("sample_weights"),
+    }
+
+    return (
+        f"Current best config (score={best_score:.4f}):\n"
+        f"{json.dumps(tuneable_cfg, indent=2)}\n\n"
+        f"{_format_history(history, best_score)}\n\n"
+        "Propose ONE change. Respond with JSON only."
+    )
+
+
+def _create_openrouter_client(model: str) -> OpenAI:
+    """Create an OpenAI-compatible client for OpenRouter."""
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY env var is required.\n"
+            "Get a key at https://openrouter.ai/keys"
+        )
+    return OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+    )
+
+
+def _validate_proposal(proposal: dict[str, Any], cfg: dict[str, Any]) -> tuple[bool, str]:
+    """Validate that a proposal is within the search space."""
+    path = proposal.get("path", "")
+    value = proposal.get("value")
+
+    if not path or value is None:
+        return False, f"Missing 'path' or 'value' in proposal: {proposal}"
+
+    # Check the path exists in search space
+    matching = [s for s in SEARCH_SPACE if s["path"] == path]
+    if not matching:
+        return False, f"Unknown path: {path}. Must be one of: {[s['path'] for s in SEARCH_SPACE]}"
+
+    spec = matching[0]
+
+    # Validate value type and range
+    if spec["type"] == "int":
+        if not isinstance(value, (int, float)):
+            return False, f"Expected int for {path}, got {type(value).__name__}"
+        value = int(value)
+        if value < spec["low"] or value > spec["high"]:
+            return False, f"{path}={value} out of range [{spec['low']}, {spec['high']}]"
+    elif spec["type"] in ("float", "log_float"):
+        if not isinstance(value, (int, float)):
+            return False, f"Expected float for {path}, got {type(value).__name__}"
+        value = float(value)
+        if value < spec["low"] or value > spec["high"]:
+            return False, f"{path}={value} out of range [{spec['low']}, {spec['high']}]"
+    elif spec["type"] == "bool":
+        if not isinstance(value, bool):
+            return False, f"Expected bool for {path}, got {type(value).__name__}"
+
+    return True, ""
+
+
+def agent_propose_mutation(
+    cfg: dict[str, Any],
+    best_score: float,
+    history: list[dict[str, Any]],
+    client: OpenAI,
+    model: str,
+) -> tuple[dict[str, Any], str]:
+    """Ask the LLM agent to propose a config mutation. Returns (new_cfg, description)."""
+    system_prompt = _format_system_prompt()
+    user_message = _build_user_message(cfg, best_score, history)
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.7,
+        max_tokens=500,
+    )
+
+    raw_text = response.choices[0].message.content or ""
+    # Strip markdown fencing if present
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        # Remove first line (```json or ```) and last line (```)
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        cleaned = "\n".join(lines)
+
+    proposal = json.loads(cleaned)
+
+    path: str = proposal["path"]
+    value: Any = proposal["value"]
+    reasoning: str = proposal.get("reasoning", "")
+
+    # Validate
+    valid, err = _validate_proposal(proposal, cfg)
+    if not valid:
+        raise ValueError(f"Invalid proposal from agent: {err}")
+
+    # Coerce types
+    spec = [s for s in SEARCH_SPACE if s["path"] == path][0]
+    if spec["type"] == "int":
+        value = int(value)
+    elif spec["type"] in ("float", "log_float"):
+        value = float(value)
+
+    # Apply mutation
+    new_cfg = copy.deepcopy(cfg)
+    old_value = _get(new_cfg, path)
+    _set(new_cfg, path, value)
+
+    desc = f"{path}: {old_value!r} → {value!r}"
+    if reasoning:
+        logger.info("  Agent reasoning: %s", reasoning)
+
+    return new_cfg, desc
+
+
+# ---------------------------------------------------------------------------
+# Auto-apply: write best config back to pipeline.yaml
+# ---------------------------------------------------------------------------
+
+def apply_config_to_pipeline(cfg: dict[str, Any]) -> None:
+    """Update configs/pipeline.yaml with the best lgbm params."""
+    pipeline_path = PROJECT_ROOT / "configs" / "pipeline.yaml"
+    with open(pipeline_path) as f:
+        pipeline = yaml.safe_load(f)
+
+    # Update lgbm params (only the tuneable ones, preserve the rest)
+    for key in ("num_leaves", "learning_rate", "feature_fraction", "bagging_fraction", "min_child_samples", "lambda_l1", "lambda_l2", "path_smooth"):
+        if key in cfg["lgbm"]:
+            pipeline["model"]["lgbm"][key] = cfg["lgbm"][key]
+
+    pipeline["model"]["feature_groups"] = cfg["feature_groups"]
+    if "sample_weights" in cfg:
+        pipeline["model"]["sample_weights"] = cfg["sample_weights"]
+
+    with open(pipeline_path, "w") as f:
+        yaml.dump(pipeline, f, default_flow_style=False, sort_keys=False)
+
+    logger.info("Updated configs/pipeline.yaml with best lgbm params")
+
+    disabled = [g for g, enabled in cfg["feature_groups"].items() if not enabled]
+    if disabled:
+        logger.info("Updated pipeline feature groups; disabled: %s", disabled)
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
@@ -351,9 +680,11 @@ def run_autoresearch(
     seed: int,
     out_dir: Path,
     resume: bool,
+    provider: str,
+    model: str,
+    apply: bool,
 ) -> None:
     cfg = load_config()
-    model_cfg = cfg["model"]
 
     features_path = PROJECT_ROOT / cfg["paths"]["marts"] / "features.parquet"
     runners_path = PROJECT_ROOT / cfg["paths"]["staged_parquet"] / "runners.parquet"
@@ -373,7 +704,7 @@ def run_autoresearch(
     logger.info("Feature matrix: %d rows, %d feature cols", len(features), len(all_feature_cols))
 
     # Validate windows — skip any with no data
-    available_windows = []
+    available_windows: list[str] = []
     for w in windows:
         course, start, end = FESTIVAL_WINDOWS[w]
         wdf = features[
@@ -394,7 +725,16 @@ def run_autoresearch(
     results_path = out_dir / "results.jsonl"
     best_config_path = out_dir / "best_config.json"
 
+    # Set up provider
+    client: OpenAI | None = None
+    if provider == "openrouter":
+        client = _create_openrouter_client(model)
+        logger.info("Using OpenRouter agent: %s", model)
+    else:
+        logger.info("Using random mutations (no agent)")
+
     # Resume from previous best if requested
+    history: list[dict[str, Any]] = []
     if resume and best_config_path.exists():
         with open(best_config_path) as f:
             saved = json.load(f)
@@ -402,8 +742,16 @@ def run_autoresearch(
         best_score = saved["score"]
         start_iter = saved.get("iteration", 0) + 1
         logger.info("Resuming from iteration %d, best score=%.4f", start_iter, best_score)
+        # Load history from results.jsonl for agent context
+        if results_path.exists():
+            with open(results_path) as f:
+                for line in f:
+                    if line.strip():
+                        history.append(json.loads(line))
+            logger.info("Loaded %d historical trials for agent context", len(history))
     else:
-        best_cfg = copy.deepcopy(DEFAULT_CONFIG)
+        baseline_cfg = pipeline_baseline_config(cfg)
+        best_cfg = copy.deepcopy(baseline_cfg)
         # Score the baseline first
         logger.info("Evaluating baseline config...")
         baseline = evaluate_config(best_cfg, features, runners, all_feature_cols, available_windows)
@@ -419,7 +767,19 @@ def run_autoresearch(
 
     for i in range(start_iter, start_iter + n_iterations):
         t0 = time.time()
-        candidate_cfg, mutation_desc = sample_mutation(best_cfg, rng)
+
+        # Get proposal from agent or random fallback
+        if provider == "openrouter" and client is not None:
+            try:
+                candidate_cfg, mutation_desc = agent_propose_mutation(
+                    best_cfg, best_score, history, client, model,
+                )
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                logger.warning("Agent proposal failed (%s), falling back to random", e)
+                candidate_cfg, mutation_desc = sample_mutation(best_cfg, rng)
+                mutation_desc = f"[random fallback] {mutation_desc}"
+        else:
+            candidate_cfg, mutation_desc = sample_mutation(best_cfg, rng)
 
         metrics = evaluate_config(candidate_cfg, features, runners, all_feature_cols, available_windows)
         elapsed = time.time() - t0
@@ -446,6 +806,17 @@ def run_autoresearch(
             window_results=metrics["windows"],
         )
 
+        # Add to history for agent context (compact version without full config)
+        history.append({
+            "iteration": i,
+            "mutation": mutation_desc,
+            "score": metrics["score"],
+            "pooled_log_loss": metrics["pooled_log_loss"],
+            "pooled_mrr": metrics["pooled_mrr"],
+            "n_features": metrics.get("n_features", 0),
+            "accepted": accepted,
+        })
+
         _append_result(results_path, result)
 
         status = "✓ KEEP" if accepted else "  skip"
@@ -465,7 +836,12 @@ def run_autoresearch(
     logger.info("Best config: %s", best_config_path)
 
     # Print final best config summary
-    _print_diff(DEFAULT_CONFIG, best_cfg)
+    baseline_for_diff = pipeline_baseline_config(cfg)
+    _print_diff(baseline_for_diff, best_cfg)
+
+    # Auto-apply if requested
+    if apply:
+        apply_config_to_pipeline(best_cfg)
 
 
 def _save_best(
@@ -523,12 +899,12 @@ def load_config() -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Autoresearch: iterative model improvement via random mutations",
+        description="Autoresearch: agent-in-the-loop iterative model improvement",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--iterations", type=int, default=100, help="Number of mutations to try (default: 100)")
-    parser.add_argument("--seed", type=int, default=42, help="RNG seed for reproducibility")
+    parser.add_argument("--iterations", type=int, default=100, help="Number of iterations (default: 100)")
+    parser.add_argument("--seed", type=int, default=42, help="RNG seed for random fallback")
     parser.add_argument(
         "--windows",
         nargs="+",
@@ -546,6 +922,22 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Resume from best_config.json in --out if it exists",
     )
+    parser.add_argument(
+        "--provider",
+        choices=["openrouter", "random"],
+        default="openrouter",
+        help="Mutation provider: 'openrouter' (LLM agent) or 'random' (default: openrouter)",
+    )
+    parser.add_argument(
+        "--model",
+        default="anthropic/claude-sonnet-4-6",
+        help="Model ID for OpenRouter (default: anthropic/claude-sonnet-4-6)",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply best config to configs/pipeline.yaml when done",
+    )
     return parser.parse_args()
 
 
@@ -561,7 +953,10 @@ def main() -> None:
         n_iterations=args.iterations,
         seed=args.seed,
         out_dir=PROJECT_ROOT / args.out,
+        provider=args.provider,
+        model=args.model,
         resume=args.resume,
+        apply=args.apply,
     )
 
 

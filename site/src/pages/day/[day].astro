@@ -19,6 +19,6 @@ export function getStaticPaths() {
 const { dayLabel, activeDate } = Astro.props as { dayLabel: string; activeDate: string };
 ---
 
-<Layout title={`${dayLabel} — Racing Value Finder`}>
+<Layout title={`${dayLabel} — Aintree Festival Tracker`}>
   <DayPage activeDate={activeDate} races={races} />
 </Layout>

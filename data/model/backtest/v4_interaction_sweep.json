@@ -1,0 +1,95 @@
+[
+  {
+    "name": "base_v4",
+    "score": -0.05940785573447427,
+    "pooled_log_loss": 0.20368977227604868,
+    "pooled_mrr": 0.5261952560210459,
+    "n_features": 80,
+    "mutations": {}
+  },
+  {
+    "name": "num_leaves_60",
+    "score": -0.056820544079114715,
+    "pooled_log_loss": 0.2045149574514926,
+    "pooled_mrr": 0.5226710030612146,
+    "n_features": 80,
+    "mutations": {
+      "lgbm.num_leaves": 60
+    }
+  },
+  {
+    "name": "bagging_0565",
+    "score": -0.05550049883295599,
+    "pooled_log_loss": 0.2057976401052939,
+    "pooled_mrr": 0.5225962778764998,
+    "n_features": 80,
+    "mutations": {
+      "lgbm.bagging_fraction": 0.5649607526677358
+    }
+  },
+  {
+    "name": "path_smooth_47",
+    "score": -0.054595540146861715,
+    "pooled_log_loss": 0.20441879324232579,
+    "pooled_mrr": 0.518028666778375,
+    "n_features": 80,
+    "mutations": {
+      "lgbm.path_smooth": 4.695558112758079
+    }
+  },
+  {
+    "name": "path_smooth_93",
+    "score": -0.054991835403103345,
+    "pooled_log_loss": 0.20440400003221035,
+    "pooled_mrr": 0.5187916708706274,
+    "n_features": 80,
+    "mutations": {
+      "lgbm.path_smooth": 9.267649888486018
+    }
+  },
+  {
+    "name": "leaves60_bagging0565",
+    "score": -0.046262264572053874,
+    "pooled_log_loss": 0.20661368015148876,
+    "pooled_mrr": 0.5057518894470853,
+    "n_features": 80,
+    "mutations": {
+      "lgbm.num_leaves": 60,
+      "lgbm.bagging_fraction": 0.5649607526677358
+    }
+  },
+  {
+    "name": "leaves60_path47",
+    "score": -0.052103921427256866,
+    "pooled_log_loss": 0.2058869870465531,
+    "pooled_mrr": 0.5159818169476199,
+    "n_features": 80,
+    "mutations": {
+      "lgbm.num_leaves": 60,
+      "lgbm.path_smooth": 4.695558112758079
+    }
+  },
+  {
+    "name": "bagging0565_path47",
+    "score": -0.051995293429547534,
+    "pooled_log_loss": 0.20490224844066393,
+    "pooled_mrr": 0.5137950837404229,
+    "n_features": 80,
+    "mutations": {
+      "lgbm.bagging_fraction": 0.5649607526677358,
+      "lgbm.path_smooth": 4.695558112758079
+    }
+  },
+  {
+    "name": "leaves60_bagging0565_path47",
+    "score": -0.051426435124555386,
+    "pooled_log_loss": 0.20530459498719214,
+    "pooled_mrr": 0.513462060223495,
+    "n_features": 80,
+    "mutations": {
+      "lgbm.num_leaves": 60,
+      "lgbm.bagging_fraction": 0.5649607526677358,
+      "lgbm.path_smooth": 4.695558112758079
+    }
+  }
+]

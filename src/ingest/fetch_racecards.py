@@ -5,6 +5,7 @@ then copies JSON output to data/raw/racecards/.
 """
 
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -150,6 +151,7 @@ def fetch_racecards() -> list[Path]:
             continue
         dest = output_dir / src.name
         shutil.copy2(src, dest)
+        os.utime(dest, None)
         logger.info("Copied racecard: %s", dest.name)
         copied.append(dest)
 

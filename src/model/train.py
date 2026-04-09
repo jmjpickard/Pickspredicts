@@ -18,6 +18,14 @@ import yaml
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import log_loss
 
+from src.model.calibration import apply_calibration, fit_temperature_scaler
+from src.model.feature_groups import active_feature_cols, disabled_feature_groups
+from src.model.sample_weights import (
+    build_sample_weights,
+    format_sample_weights_config,
+    summarise_sample_weights,
+)
+
 logger = logging.getLogger(__name__)
 
 matplotlib.use("Agg")
@@ -91,9 +99,18 @@ def train() -> None:
     logger.info("Loaded features: %s", df.shape)
 
     # --- Feature columns ---
-    feature_cols = [c for c in df.columns if c not in META_COLS]
+    all_feature_cols = [c for c in df.columns if c not in META_COLS]
+    feature_cols = active_feature_cols(all_feature_cols, model_cfg.get("feature_groups"))
     label_col: str = model_cfg["label"]
-    logger.info("Feature columns (%d): %s", len(feature_cols), feature_cols[:10])
+    logger.info(
+        "Feature columns (%d active / %d total): %s",
+        len(feature_cols),
+        len(all_feature_cols),
+        feature_cols[:10],
+    )
+    disabled_groups = disabled_feature_groups(model_cfg.get("feature_groups"))
+    if disabled_groups:
+        logger.info("Disabled feature groups: %s", disabled_groups)
 
     # --- Walk-forward split ---
     df["date"] = pd.to_datetime(df["date"])
@@ -124,7 +141,20 @@ def train() -> None:
     # --- Training ---
     train_params = {k: v for k, v in lgbm_params.items() if k != "early_stopping_rounds"}
 
-    train_ds = lgb.Dataset(train_df[feature_cols], label=train_df[label_col])
+    sample_weights_cfg: dict[str, Any] | None = model_cfg.get("sample_weights")
+    train_weights = build_sample_weights(train_df, val_start, sample_weights_cfg)
+    if train_weights is not None:
+        logger.info(
+            "Sample weights: %s | %s",
+            format_sample_weights_config(sample_weights_cfg),
+            summarise_sample_weights(train_weights),
+        )
+
+    train_ds = lgb.Dataset(
+        train_df[feature_cols],
+        label=train_df[label_col],
+        weight=train_weights.to_numpy(dtype=np.float64) if train_weights is not None else None,
+    )
     val_ds = lgb.Dataset(val_df[feature_cols], label=val_df[label_col], reference=train_ds)
 
     callbacks = [
@@ -143,12 +173,42 @@ def train() -> None:
     logger.info("Best iteration: %d", booster.best_iteration)
 
     # --- Evaluation ---
-    val_df["raw_prob"] = booster.predict(val_df[feature_cols], num_iteration=booster.best_iteration)
+    val_df["base_prob"] = booster.predict(val_df[feature_cols], num_iteration=booster.best_iteration)
+    val_df["win_prob_uncalibrated"] = _softmax_per_race(val_df, "base_prob")  # type: ignore[arg-type]
+    ll_uncalibrated = float(log_loss(val_df[label_col], val_df["win_prob_uncalibrated"]))
+
+    calibration_cfg: dict[str, Any] = model_cfg.get("calibration", {})
+    calibration_artifact: dict[str, Any] | None = None
+    if calibration_cfg.get("enabled", False):
+        calibration_artifact = fit_temperature_scaler(
+            labels=val_df[label_col],
+            race_ids=val_df["race_id"],
+            probs=np.asarray(val_df["base_prob"], dtype=np.float64),
+            min_temperature=float(calibration_cfg.get("min_temperature", 0.6)),
+            max_temperature=float(calibration_cfg.get("max_temperature", 2.0)),
+            num_grid_points=int(calibration_cfg.get("num_grid_points", 71)),
+        )
+        logger.info(
+            "Temperature scaling: T=%.3f  log_loss %.4f -> %.4f",
+            float(calibration_artifact["temperature"]),
+            float(calibration_artifact["log_loss_before"]),
+            float(calibration_artifact["log_loss_after"]),
+        )
+
+    calibrated_probs = apply_calibration(
+        np.asarray(val_df["base_prob"], dtype=np.float64),
+        calibration_artifact,
+    )
+    val_df["raw_prob"] = calibrated_probs
     val_df["win_prob"] = _softmax_per_race(val_df, "raw_prob")  # type: ignore[arg-type]
 
-    # Log loss (on softmax-normalised probs)
+    # Log loss (on race-normalised probs)
     ll = float(log_loss(val_df[label_col], val_df["win_prob"]))
-    logger.info("Validation log loss (softmax-normalised): %.4f", ll)
+    logger.info(
+        "Validation log loss (softmax-normalised): %.4f (uncalibrated %.4f)",
+        ll,
+        ll_uncalibrated,
+    )
 
     # Top-1 accuracy: model's top pick per race
     top_idx = val_df.groupby("race_id")["win_prob"].idxmax()
@@ -176,12 +236,16 @@ def train() -> None:
     )
 
     # Calibration plot
+    prob_true_uncal, prob_pred_uncal = calibration_curve(
+        val_df[label_col], val_df["win_prob_uncalibrated"], n_bins=10, strategy="quantile"
+    )
     prob_true, prob_pred = calibration_curve(
         val_df[label_col], val_df["win_prob"], n_bins=10, strategy="quantile"
     )
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.plot([0, 1], [0, 1], "k--", label="Perfectly calibrated")
-    ax.plot(prob_pred, prob_true, "o-", label="Model")
+    ax.plot(prob_pred_uncal, prob_true_uncal, "o-", label="Uncalibrated")
+    ax.plot(prob_pred, prob_true, "o-", label="Temperature-scaled")
     ax.set_xlabel("Mean predicted probability")
     ax.set_ylabel("Fraction of positives")
     ax.set_title("Calibration plot — Cheltenham 2025 validation")
@@ -208,8 +272,14 @@ def train() -> None:
     with open(output_dir / "feature_cols.json", "w") as f:
         json.dump(feature_cols, f, indent=2)
 
-    metrics: dict[str, float | int] = {
+    if calibration_artifact is not None:
+        with open(output_dir / "calibration.json", "w") as f:
+            json.dump(calibration_artifact, f, indent=2)
+        logger.info("Saved calibration artifact to %s", output_dir / "calibration.json")
+
+    metrics: dict[str, Any] = {
         "log_loss": ll,
+        "log_loss_uncalibrated": ll_uncalibrated,
         "model_top1_accuracy": model_top1,
         "model_roi": model_roi,
         "model_pnl": float(model_pnl.sum()),
@@ -218,6 +288,13 @@ def train() -> None:
         "best_iteration": booster.best_iteration,
         **fav_metrics,
     }
+    if calibration_artifact is not None:
+        metrics["temperature"] = float(calibration_artifact["temperature"])
+    if train_weights is not None:
+        metrics["sample_weights"] = {
+            "config": sample_weights_cfg,
+            "summary": summarise_sample_weights(train_weights),
+        }
     with open(output_dir / "metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
 

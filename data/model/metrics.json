@@ -1,12 +1,14 @@
 {
-  "log_loss": 0.19511109706099486,
-  "model_top1_accuracy": 0.32142857142857145,
-  "model_roi": 0.13714285714285715,
-  "model_pnl": 3.84,
+  "log_loss": 0.20023663605625652,
+  "log_loss_uncalibrated": 0.2003894649973709,
+  "model_top1_accuracy": 0.2857142857142857,
+  "model_roi": -0.023571428571428577,
+  "model_pnl": -0.6600000000000001,
   "total_val_races": 28,
   "total_val_runners": 452,
-  "best_iteration": 52,
+  "best_iteration": 263,
   "fav_top1_accuracy": 0.32142857142857145,
   "fav_roi": 0.13714285714285715,
-  "fav_pnl": 3.84
+  "fav_pnl": 3.84,
+  "temperature": 0.94
 }

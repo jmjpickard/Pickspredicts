@@ -18,7 +18,11 @@ from src.features.groups.pedigree import pedigree
 from src.features.groups.race_context import race_context
 from src.features.groups.market import market
 from src.features.groups.ratings import ratings
+from src.features.groups.ratings_vs_field import ratings_vs_field
 from src.features.groups.runner_profile import runner_profile
+from src.features.groups.enhanced import enhanced
+from src.features.groups.connections_extended import connections_extended
+from src.features.groups.horse_context import horse_context
 from src.features.racecard import load_racecards
 
 logger = logging.getLogger(__name__)
@@ -27,11 +31,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 COURSE_TRACK_DIRECTION = {
     "aintree": "left",
+    "ascot": "right",
     "catterick": "left",
     "cheltenham": "left",
+    "chepstow": "left",
+    "doncaster": "left",
+    "exeter": "right",
+    "fairyhouse": "right",
+    "haydock": "left",
+    "kempton": "right",
     "leopardstown": "left",
+    "navan": "left",
+    "newbury": "left",
     "punchestown": "right",
+    "sandown": "right",
     "thurles": "right",
+    "warwick": "left",
+    "wetherby": "left",
+    "wincanton": "right",
 }
 
 DOMINANT_STYLE_CODE_MAP = {
@@ -177,6 +194,22 @@ def build_features() -> None:
     g8 = runner_profile(con)
     logger.info("  → %d rows, %d features", len(g8), len(g8.columns) - 2)
 
+    logger.info("Computing ratings vs field features (G9)...")
+    g9 = ratings_vs_field(con)
+    logger.info("  → %d rows, %d features", len(g9), len(g9.columns) - 2)
+
+    logger.info("Computing enhanced features (G10)...")
+    g10 = enhanced(con)
+    logger.info("  → %d rows, %d features", len(g10), len(g10.columns) - 2)
+
+    logger.info("Computing connections extended features (G11)...")
+    g11 = connections_extended(con)
+    logger.info("  → %d rows, %d features", len(g11), len(g11.columns) - 2)
+
+    logger.info("Computing horse context features (G12)...")
+    g12 = horse_context(con)
+    logger.info("  → %d rows, %d features", len(g12), len(g12.columns) - 2)
+
     # Market features (G7) — requires betfair_historical.parquet
     betfair_path = parquet_dir / "betfair_historical.parquet"
     g7: pd.DataFrame | None = None
@@ -206,7 +239,7 @@ def build_features() -> None:
 
     # Merge all feature groups
     features = base
-    groups = [g5, g1, g2, g3, g4, g8]
+    groups = [g5, g1, g2, g3, g4, g8, g9, g10, g11, g12]
     if g7 is not None:
         groups.append(g7)
     if g6 is not None:
@@ -323,6 +356,10 @@ def _build_scoring_features(
     g3 = connections(con)
     g4 = pedigree(con)
     g8 = runner_profile(con)
+    g9 = ratings_vs_field(con)
+    g10 = enhanced(con)
+    g11 = connections_extended(con)
+    g12 = horse_context(con)
 
     # Market features for scoring — load betfair + exchange odds
     parquet_dir = PROJECT_ROOT / config["paths"]["staged_parquet"]
@@ -379,7 +416,7 @@ def _build_scoring_features(
     base["horse_id"] = base["horse_id"].astype(int)
 
     features = base
-    groups_2026 = [g5, g1, g2, g3, g4, g8]
+    groups_2026 = [g5, g1, g2, g3, g4, g8, g9, g10, g11, g12]
     if g7_scoring is not None:
         groups_2026.append(g7_scoring)
     if g6_scoring is not None:

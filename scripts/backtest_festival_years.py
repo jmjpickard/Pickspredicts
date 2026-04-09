@@ -28,6 +28,12 @@ import pandas as pd
 import yaml
 from sklearn.metrics import log_loss
 
+from src.model.feature_groups import active_feature_cols, disabled_feature_groups
+from src.model.sample_weights import (
+    build_sample_weights,
+    format_sample_weights_config,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 META_COLS = {
@@ -164,6 +170,7 @@ def evaluate_window(
     races: pd.DataFrame,
     feature_cols: list[str],
     lgbm_params: dict[str, Any],
+    sample_weights_cfg: dict[str, Any] | None = None,
 ) -> BacktestResult:
     val_start = pd.Timestamp(start)
     val_end = pd.Timestamp(end)
@@ -189,7 +196,12 @@ def evaluate_window(
 
     train_params = {k: v for k, v in lgbm_params.items() if k != "early_stopping_rounds"}
 
-    train_ds = lgb.Dataset(train_df[feature_cols], label=train_df["won"])
+    train_weights = build_sample_weights(train_df, val_start, sample_weights_cfg)
+    train_ds = lgb.Dataset(
+        train_df[feature_cols],
+        label=train_df["won"],
+        weight=train_weights.to_numpy(dtype=np.float64) if train_weights is not None else None,
+    )
     val_ds = lgb.Dataset(val_df[feature_cols], label=val_df["won"], reference=train_ds)
 
     booster = lgb.train(
@@ -329,7 +341,13 @@ def main() -> None:
     races = pd.read_parquet(PROJECT_ROOT / cfg["paths"]["staged_parquet"] / "races.parquet")
 
     features["date"] = pd.to_datetime(features["date"])
-    feature_cols = [c for c in features.columns if c not in META_COLS]
+    all_feature_cols = [c for c in features.columns if c not in META_COLS]
+    feature_cols = active_feature_cols(all_feature_cols, model_cfg.get("feature_groups"))
+    disabled_groups = disabled_feature_groups(model_cfg.get("feature_groups"))
+    if disabled_groups:
+        print(f"Disabled feature groups: {', '.join(disabled_groups)}")
+    if model_cfg.get("sample_weights", {}).get("enabled", False):
+        print(f"Sample weights: {format_sample_weights_config(model_cfg.get('sample_weights'))}")
 
     results: list[BacktestResult] = []
     for window_name in args.windows:
@@ -347,6 +365,7 @@ def main() -> None:
             races=races,
             feature_cols=feature_cols,
             lgbm_params=model_cfg["lgbm"],
+            sample_weights_cfg=model_cfg.get("sample_weights"),
         )
         results.append(result)
 

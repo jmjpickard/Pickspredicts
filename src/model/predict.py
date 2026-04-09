@@ -15,6 +15,7 @@ import pandas as pd
 import yaml
 
 from src.ingest.racecard_health import validate_racecard_files
+from src.model.calibration import apply_calibration, load_calibration_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -447,6 +448,7 @@ def predict() -> None:
         return
 
     booster = lgb.Booster(model_file=str(model_path))
+    calibration_artifact = load_calibration_artifact(output_dir / "calibration.json")
 
     with open(output_dir / "feature_cols.json") as f:
         feature_cols: list[str] = json.load(f)
@@ -485,7 +487,11 @@ def predict() -> None:
             )
 
     # --- Score ---
-    df["raw_prob"] = booster.predict(df[feature_cols], num_iteration=booster.best_iteration)
+    df["base_prob"] = booster.predict(df[feature_cols], num_iteration=booster.best_iteration)
+    df["raw_prob"] = apply_calibration(
+        np.asarray(df["base_prob"], dtype=np.float64),
+        calibration_artifact,
+    )
     df["win_prob"] = _softmax_per_race(df, "raw_prob")  # type: ignore[arg-type]
 
     # --- Harville place probabilities ---
@@ -557,7 +563,7 @@ def predict() -> None:
 
     # Include metadata if available for context
     extra_cols = ["date", "course", "race_name", "race_type", "race_class",
-                  "off_time", "distance_f", "is_handicap", "pattern",
+                  "off_time", "distance_f", "field_size", "is_handicap", "pattern",
                   "going", "official_rating", "best_odds"]
     for extra in extra_cols:
         if extra in df.columns and extra not in output_cols:
@@ -574,13 +580,22 @@ def predict() -> None:
     # JSON grouped by race
     races_json: list[dict[str, Any]] = []
     race_meta_fields = ["date", "course", "race_name", "race_type", "race_class",
-                        "off_time", "distance_f", "is_handicap", "pattern", "going"]
+                        "off_time", "distance_f", "field_size", "is_handicap", "pattern", "going"]
     for _race_id, group in out_df.groupby("race_id"):
         race_info: dict[str, Any] = {"race_id": str(_race_id)}
         for field in race_meta_fields:
             if field in group.columns:
                 val = group[field].iloc[0]
-                race_info[field] = None if pd.isna(val) else str(val)  # type: ignore[arg-type]
+                if pd.isna(val):
+                    race_info[field] = None
+                elif field == "distance_f":
+                    race_info[field] = float(val)  # type: ignore[arg-type]
+                elif field == "field_size":
+                    race_info[field] = int(val)  # type: ignore[arg-type]
+                elif field == "is_handicap":
+                    race_info[field] = bool(val)  # type: ignore[arg-type]
+                else:
+                    race_info[field] = str(val)  # type: ignore[arg-type]
         race_info["analysis"] = _build_race_analysis(group, strong_thresh=strong_thresh)
         runners_list: list[dict[str, Any]] = []
         for row_idx in range(len(group)):

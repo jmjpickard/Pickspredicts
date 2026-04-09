@@ -1,8 +1,9 @@
 ---
 import DayTabs from "./DayTabs.astro";
+import FestivalTracker from "./FestivalTracker.astro";
 import RaceCard from "./RaceCard.astro";
 import ReturnsBanner from "./ReturnsBanner.astro";
-import { getRaceDays, type Race } from "../types";
+import { getRaceDays, raceHasResults, toNumber, type Race } from "../types";
 
 interface Props {
   activeDate?: string;
@@ -15,98 +16,69 @@ const days = getRaceDays(races);
 const selectedDate = days.some((d) => d.date === activeDate) ? activeDate : days[0]?.date;
 const selectedLabel = days.find((d) => d.date === selectedDate)?.label ?? selectedDate ?? "";
 
-const hasResults = races.some((r) => r.runners.some((run) => run.finish_position != null));
+const hasResults = races.some((race) => raceHasResults(race));
 
 const dayRaces = races
   .filter((r) => selectedDate && r.date?.startsWith(selectedDate))
   .sort((a, b) => (a.off_time ?? "").localeCompare(b.off_time ?? ""));
 
 const dayPlanA = dayRaces
-  .filter((race) => (race.plan_a_points ?? 0) > 0 && !!race.plan_a_pick_horse_name)
+  .filter((race) => (toNumber(race.plan_a_points) ?? 0) > 0 && !!race.plan_a_pick_horse_name)
   .map((race) => ({
     raceId: race.race_id,
     offTime: race.off_time ?? "",
     raceName: race.race_name ?? `Race ${race.race_id}`,
     horseName: race.plan_a_pick_horse_name ?? "",
-    points: race.plan_a_points ?? 0,
+    points: toNumber(race.plan_a_points) ?? 0,
   }))
   .sort((a, b) => a.offTime.localeCompare(b.offTime) || (b.points - a.points));
 
 const dayPlanATotal = dayPlanA.reduce((sum, pick) => sum + pick.points, 0);
+const settledDayRaces = dayRaces.filter((race) => raceHasResults(race));
 
 const racesExist = races.length > 0;
 const dayHasRaces = dayRaces.length > 0;
-
-// Festival totals
-const totalBets = races.reduce((s, r) => s + (r.num_bets ?? 0), 0);
-const totalWinPl = races.reduce((s, r) => s + (r.race_win_pl ?? 0), 0);
-const totalEwPl = races.reduce((s, r) => s + (r.race_ew_pl ?? 0), 0);
 ---
 
 {!racesExist ? (
   <div class="text-center py-16">
-    <h2 class="text-xl font-semibold text-gray-700 mb-2">No predictions yet</h2>
+    <h2 class="mb-2 text-xl font-semibold text-gray-700">No predictions yet</h2>
     <p class="text-gray-500">
-      Predictions will appear once Cheltenham racecards are declared.
+      Predictions will appear once the meeting racecards are declared.
     </p>
   </div>
 ) : (
   <>
-    {hasResults && totalBets > 0 && (
-      <div class="rounded-lg border-2 border-racing-green bg-racing-green/5 p-4 mb-6">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2 class="text-base font-bold text-racing-green">Festival Returns</h2>
-            <p class="text-xs text-gray-500 mt-0.5">
-              {totalBets} "Strong value" bets across {Math.max(days.length, 1)} days
-            </p>
-          </div>
-          <div class="flex gap-8">
-            <div class="text-center">
-              <p class="text-xs text-gray-500 uppercase tracking-wide">1pt Win</p>
-              <p class={`text-2xl font-bold tabular-nums ${totalWinPl >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                {totalWinPl >= 0 ? "+" : ""}{totalWinPl.toFixed(2)}pts
-              </p>
-              <p class="text-xs text-gray-400 mt-0.5">
-                {(totalWinPl / totalBets * 100).toFixed(0)}% ROI
-              </p>
-            </div>
-            <div class="text-center">
-              <p class="text-xs text-gray-500 uppercase tracking-wide">1pt E/W</p>
-              <p class={`text-2xl font-bold tabular-nums ${totalEwPl >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                {totalEwPl >= 0 ? "+" : ""}{totalEwPl.toFixed(2)}pts
-              </p>
-              <p class="text-xs text-gray-400 mt-0.5">
-                {(totalEwPl / totalBets * 100).toFixed(0)}% ROI
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    )}
+    <FestivalTracker activeDate={selectedDate} races={races} />
 
     <DayTabs activeDate={selectedDate ?? ""} days={days} />
 
     {dayPlanA.length > 0 && (
-      <section class="rounded-lg border border-racing-green/30 bg-racing-green/5 p-4 mb-6">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="text-sm font-bold text-racing-green">Plan A ({dayPlanATotal.toFixed(1)}pt)</h2>
-          <p class="text-xs text-gray-500">Value-led daily staking plan</p>
+      <section class="mb-6 rounded-[24px] border border-racing-green/20 bg-white px-5 py-4 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-sm font-bold uppercase tracking-[0.2em] text-racing-green">
+              {selectedLabel} Plan A
+            </h2>
+            <p class="mt-1 text-sm text-gray-500">Primary staking book for the selected day.</p>
+          </div>
+          <p class="text-lg font-semibold tabular-nums text-racing-green">{dayPlanATotal.toFixed(1)}pt</p>
         </div>
-        <ul class="mt-3 grid gap-1.5 sm:grid-cols-2">
+        <ul class="mt-4 grid gap-2 sm:grid-cols-2">
           {dayPlanA.map((pick) => (
-            <li class="text-sm text-gray-700">
-              <span class="font-semibold text-gray-900">{pick.points.toFixed(1)}pt</span>{" "}
-              {pick.horseName}
-              <span class="text-gray-500"> ({pick.offTime})</span>
+            <li class="rounded-2xl bg-racing-cream px-3 py-2 text-sm text-gray-700">
+              <span class="font-semibold text-racing-green">{pick.points.toFixed(1)}pt</span>
+              {" "}
+              <span class="font-medium text-gray-900">{pick.horseName}</span>
+              <span class="text-gray-500"> at {pick.offTime}</span>
             </li>
           ))}
         </ul>
       </section>
     )}
 
-    {hasResults && dayRaces.some((r) => (r.num_bets ?? 0) > 0) && (
-      <ReturnsBanner races={dayRaces} label={`${selectedLabel} Returns`} />
+    {hasResults && settledDayRaces.some((race) => (toNumber(race.num_bets) ?? 0) > 0) && (
+      <ReturnsBanner races={settledDayRaces} label={`${selectedLabel} Returns`} />
     )}
 
     {!dayHasRaces ? (
@@ -118,7 +90,7 @@ const totalEwPl = races.reduce((s, r) => s + (r.race_ew_pl ?? 0), 0);
     ) : (
       <div class="space-y-3">
         {dayRaces.map((race) => (
-          <RaceCard race={race} showResults={hasResults} />
+          <RaceCard race={race} showResults={raceHasResults(race)} />
         ))}
       </div>
     )}

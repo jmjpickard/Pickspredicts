@@ -1,5 +1,5 @@
 ---
-import type { Race } from "../types";
+import { toNumber, type Race } from "../types";
 
 interface Props {
   races: Race[];
@@ -8,14 +8,14 @@ interface Props {
 
 const { races, label } = Astro.props;
 
-const totalBets = races.reduce((s, r) => s + (r.num_bets ?? 0), 0);
+const totalBets = races.reduce((s, r) => s + (toNumber(r.num_bets) ?? 0), 0);
 
 // Use the last race's cumulative values for this set
 const lastRace = races[races.length - 1];
-const dayWinPl = races.reduce((s, r) => s + (r.race_win_pl ?? 0), 0);
-const dayEwPl = races.reduce((s, r) => s + (r.race_ew_pl ?? 0), 0);
-const cumWinPl = lastRace?.cumulative_win_pl ?? 0;
-const cumEwPl = lastRace?.cumulative_ew_pl ?? 0;
+const dayWinPl = races.reduce((s, r) => s + (toNumber(r.race_win_pl) ?? 0), 0);
+const dayEwPl = races.reduce((s, r) => s + (toNumber(r.race_ew_pl) ?? 0), 0);
+const cumWinPl = toNumber(lastRace?.cumulative_win_pl) ?? 0;
+const cumEwPl = toNumber(lastRace?.cumulative_ew_pl) ?? 0;
 
 function plStr(v: number): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}`;

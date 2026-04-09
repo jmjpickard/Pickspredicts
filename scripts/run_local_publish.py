@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -20,6 +19,7 @@ from pathlib import Path
 from typing import Sequence
 
 from dotenv import load_dotenv
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _ = load_dotenv(PROJECT_ROOT / ".env")
@@ -69,6 +69,83 @@ def _summarise_predictions(predictions_path: Path) -> None:
     print(f"- courses: {', '.join(courses) if courses else '(none)'}")
 
 
+def _load_pipeline_config() -> dict:
+    with open(PROJECT_ROOT / "configs" / "pipeline.yaml") as f:
+        return yaml.safe_load(f)
+
+
+def _scoring_courses(args: argparse.Namespace, env: dict[str, str], config: dict) -> list[str]:
+    if args.courses:
+        return [str(course).strip() for course in args.courses if str(course).strip()]
+
+    env_override = env.get("SCORING_COURSES", "").strip()
+    if env_override:
+        return [token.strip() for token in env_override.split(",") if token.strip()]
+
+    configured = config.get("racecards", {}).get("scoring_courses", [])
+    return [str(course).strip() for course in configured if str(course).strip()]
+
+
+def _result_years(config: dict) -> str | None:
+    configured_dates = config.get("racecards", {}).get("dates", [])
+    years = sorted({str(date)[:4] for date in configured_dates if str(date)[:4]})
+    if not years:
+        return None
+    if len(years) == 1:
+        return years[0]
+    return f"{years[0]}-{years[-1]}"
+
+
+def _refresh_scoring_results(args: argparse.Namespace, env: dict[str, str]) -> bool:
+    from src.ingest.fetch_results import fetch_course
+
+    config = _load_pipeline_config()
+    years = _result_years(config)
+    if not years:
+        print("\nSkipping results refresh: no racecard dates configured")
+        return False
+
+    courses_cfg = config.get("courses", {})
+    output_dir = PROJECT_ROOT / config["paths"]["raw_results"]
+    requested_courses = _scoring_courses(args, env, config)
+    refreshed_any = False
+
+    for requested_course in requested_courses:
+        course_key = next(
+            (
+                key
+                for key in courses_cfg
+                if str(key).strip().lower() == requested_course.strip().lower()
+            ),
+            None,
+        )
+        if course_key is None:
+            print(f"\nSkipping results refresh for {requested_course}: course not in config")
+            continue
+
+        course_cfg = courses_cfg[course_key]
+        course_id = course_cfg.get("id")
+        race_type = course_cfg.get("type")
+        if course_id is None or not race_type:
+            print(f"\nSkipping results refresh for {requested_course}: incomplete course config")
+            continue
+
+        path = fetch_course(
+            course_name=str(course_key),
+            course_id=int(course_id),
+            years=years,
+            race_type=str(race_type),
+            output_dir=output_dir,
+            refresh=True,
+        )
+        if path is None:
+            print(f"\nWarning: results refresh failed for {requested_course} {years}")
+            continue
+        refreshed_any = True
+
+    return refreshed_any
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local model flow and publish UI JSON")
     parser.add_argument(
@@ -85,6 +162,11 @@ def parse_args() -> argparse.Namespace:
         "--skip-fetch-odds",
         action="store_true",
         help="Skip fetching live exchange odds",
+    )
+    parser.add_argument(
+        "--skip-refresh-results",
+        action="store_true",
+        help="Skip refreshing current-year results for scoring courses before settlement",
     )
     parser.add_argument(
         "--courses",
@@ -152,16 +234,28 @@ def _publish_once(
                 "BETFAIR_PASSWORD in environment"
             )
 
+    if not args.skip_refresh_results and _refresh_scoring_results(args, env):
+        _run([python_bin, "-m", "src.pipeline", "--step", "normalise"], env)
+
     _run([python_bin, "-m", "src.pipeline", "--step", "features"], env)
     _run([python_bin, "-m", "src.pipeline", "--step", "predict"], env)
 
-    src_json = PROJECT_ROOT / "data" / "model" / "predictions.json"
     dst_json = PROJECT_ROOT / args.publish_path
     dst_json.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src_json, dst_json)
+    _run(
+        [
+            python_bin,
+            "scripts/settle_predictions.py",
+            "--input",
+            "data/model/predictions.json",
+            "--output",
+            args.publish_path,
+        ],
+        env,
+    )
 
     print(f"\nPublished UI JSON: {dst_json}")
-    _summarise_predictions(src_json)
+    _summarise_predictions(dst_json)
 
 
 def main() -> None:
