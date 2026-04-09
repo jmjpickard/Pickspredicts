@@ -3,7 +3,7 @@ import DayTabs from "./DayTabs.astro";
 import FestivalTracker from "./FestivalTracker.astro";
 import RaceCard from "./RaceCard.astro";
 import ReturnsBanner from "./ReturnsBanner.astro";
-import { getRaceDays, raceHasResults, toNumber, type Race } from "../types";
+import { getRaceDays, getTopPick, raceHasResults, type Race } from "../types";
 
 interface Props {
   activeDate?: string;
@@ -22,18 +22,30 @@ const dayRaces = races
   .filter((r) => selectedDate && r.date?.startsWith(selectedDate))
   .sort((a, b) => (a.off_time ?? "").localeCompare(b.off_time ?? ""));
 
-const dayPlanA = dayRaces
-  .filter((race) => (toNumber(race.plan_a_points) ?? 0) > 0 && !!race.plan_a_pick_horse_name)
-  .map((race) => ({
+const dayTopPicks = dayRaces.reduce((picks, race) => {
+  const topPick = getTopPick(race);
+  if (!topPick) {
+    return picks;
+  }
+
+  picks.push({
     raceId: race.race_id,
     offTime: race.off_time ?? "",
     raceName: race.race_name ?? `Race ${race.race_id}`,
-    horseName: race.plan_a_pick_horse_name ?? "",
-    points: toNumber(race.plan_a_points) ?? 0,
-  }))
-  .sort((a, b) => a.offTime.localeCompare(b.offTime) || (b.points - a.points));
+    horseName: topPick.horse_name,
+    points: 1,
+  });
 
-const dayPlanATotal = dayPlanA.reduce((sum, pick) => sum + pick.points, 0);
+  return picks;
+}, [] as Array<{
+  raceId: string;
+  offTime: string;
+  raceName: string;
+  horseName: string;
+  points: number;
+}>);
+
+const dayTopPickTotal = dayTopPicks.length;
 const settledDayRaces = dayRaces.filter((race) => raceHasResults(race));
 
 const racesExist = races.length > 0;
@@ -53,19 +65,19 @@ const dayHasRaces = dayRaces.length > 0;
 
     <DayTabs activeDate={selectedDate ?? ""} days={days} />
 
-    {dayPlanA.length > 0 && (
+    {dayTopPicks.length > 0 && (
       <section class="mb-6 rounded-[24px] border border-racing-green/20 bg-white px-5 py-4 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 class="text-sm font-bold uppercase tracking-[0.2em] text-racing-green">
-              {selectedLabel} Plan A
+              {selectedLabel} Top Picks
             </h2>
-            <p class="mt-1 text-sm text-gray-500">Primary staking book for the selected day.</p>
+            <p class="mt-1 text-sm text-gray-500">Top model pick in every race at a flat 1pt win.</p>
           </div>
-          <p class="text-lg font-semibold tabular-nums text-racing-green">{dayPlanATotal.toFixed(1)}pt</p>
+          <p class="text-lg font-semibold tabular-nums text-racing-green">{dayTopPickTotal.toFixed(1)}pt</p>
         </div>
         <ul class="mt-4 grid gap-2 sm:grid-cols-2">
-          {dayPlanA.map((pick) => (
+          {dayTopPicks.map((pick) => (
             <li class="rounded-2xl bg-racing-cream px-3 py-2 text-sm text-gray-700">
               <span class="font-semibold text-racing-green">{pick.points.toFixed(1)}pt</span>
               {" "}
